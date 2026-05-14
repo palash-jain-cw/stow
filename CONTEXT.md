@@ -28,6 +28,8 @@ It is not Tally. It is inspired by Tally's accounting model but uses plain Engli
 | **STCG** | Short-Term Capital Gain — equity held < 12 months, taxed at 20% |
 | **LTCG** | Long-Term Capital Gain — equity held ≥ 12 months, taxed at 12.5% above ₹1.25L exemption |
 | **Staging Area** | A temporary holding space for AI-parsed bank statement rows, pending user review and confirmation before being posted as transactions |
+| **Price Quote** | A fetched market price for an investment account on a given date — NAV for equity MFs (from AMFI), price for stocks (from NSE/yfinance); used to calculate current value and unrealized gain on the Portfolio screen |
+| **Price Source ID** | The identifier used to fetch prices for an investment account — AMFI scheme code for equity MFs, NSE ticker symbol (e.g. `INFY`, `HDFCBANK`) for stocks |
 | **Transaction Date** | The date the transaction actually occurred — canonical for all reports |
 | **Entry Date** | The date the transaction was recorded in Stow — stored as metadata, never used in reports |
 | **Tag** | A free-form label on a transaction for filtering and grouping (e.g. `freelance`, `tax-deductible`) |
@@ -113,6 +115,13 @@ Investment accounts are split into four sub-types with different tracking needs:
 - A **Capital Gains Report** is generated for ITR Schedule CG
 - FD interest income is recorded as a Receipt transaction; TDS deducted tracked under TDS Receivable
 - PPF contributions recorded as Payment transactions to a PPF asset account
+
+### Live Prices (Equity MF & Stocks)
+- Each equity MF account carries an AMFI scheme code (**Price Source ID**); each stock account carries an NSE ticker symbol
+- A daily background job fetches current NAV from the AMFI/mfapi.in API and stock prices from NSE bhavcopy or yfinance
+- Fetched prices are stored in a `price_quote` table (account, price, date)
+- **Current value** = latest price quote × open units; **Unrealized gain** = current value − cost basis
+- The Portfolio screen shows current value and unrealized gain only when a price quote exists for the account; otherwise it shows cost basis only
 
 ### Depreciation
 - Method: Written Down Value (WDV) per Income Tax Act
