@@ -162,7 +162,8 @@ All reports are generated server-side and exportable as PDF.
 - Rules can be managed (viewed, edited, deleted) from settings
 
 ### AI Stack
-- Local Ollama running Qwen3.6
+- Any OpenAI-compatible local inference server (oMLX, Ollama, LM Studio, vLLM, etc.)
+- Configured via `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL` environment variables
 - No external API calls — all inference is on-device
 
 ## Technology Stack
@@ -173,7 +174,7 @@ All reports are generated server-side and exportable as PDF.
 | Backend | FastAPI (Python) |
 | ORM | SQLModel + Alembic |
 | Database | PostgreSQL |
-| AI | Ollama + Qwen3.6 (local) |
+| AI | OpenAI-compatible local inference API (oMLX, Ollama, LM Studio, vLLM) |
 | PDF export | WeasyPrint or ReportLab |
 | PDF parsing | pdfplumber or pymupdf |
 | Deployment | Docker Compose (local machine) |

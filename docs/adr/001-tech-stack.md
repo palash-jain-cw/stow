@@ -19,9 +19,10 @@ Single-user personal accounting application running locally on Apple Silicon Mac
 - shadcn/ui for accessible, customizable components without enterprise-app aesthetics
 - React Query for server state management paired with REST endpoints
 
-### AI: Ollama + Qwen3.6 (local)
+### AI: OpenAI-compatible local inference API
+- Any server exposing an OpenAI-compatible API endpoint (oMLX, Ollama, LM Studio, vLLM, etc.)
+- Configured via environment variables: `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL`
 - All inference on-device — no external API calls, no cost, no data leaving the machine
-- Qwen3.6 chosen by user (already in use)
 - PDF parsing via pdfplumber/pymupdf + LLM structured extraction (not vision)
 
 ### Deployment: Docker Compose
@@ -34,4 +35,4 @@ Single-user personal accounting application running locally on Apple Silicon Mac
 - **SQLite**: insufficient transaction isolation for accounting workloads
 - **Next.js**: SSR overhead unnecessary for a local single-user SPA
 - **GraphQL**: adds schema complexity without benefit for a simple REST CRUD app
-- **Claude API / OpenAI**: requires external calls; user prefers local inference
+- **Hardcoding Ollama**: too restrictive; user runs oMLX and may switch inference backends — OpenAI-compatible API is the common interface
