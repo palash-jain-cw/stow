@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Reports</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+
+    /* Report tabs */
+    .report-tab { transition: all 150ms; border-bottom: 2px solid transparent; }
+    .report-tab.active { border-bottom-color: #18181b; color: #18181b; font-weight: 500; }
+    .report-tab:not(.active) { color: #71717a; }
+    .report-tab:not(.active):hover { color: #3f3f46; }
+
+    /* Report panels */
+    .report-panel { display: none; }
+    .report-panel.active { display: block; }
+
+    /* Ledger rows */
+    .ledger-section-header { background: #f9f9f9; }
+    .ledger-group { font-weight: 500; }
+    .ledger-account { color: #3f3f46; }
+    .ledger-subtotal { border-top: 1px solid #e4e4e7; font-weight: 500; }
+    .ledger-total { border-top: 2px solid #18181b; font-weight: 600; background: #fafafa; }
+    .ledger-grand { border-top: 2px solid #18181b; border-bottom: 2px solid #18181b; font-weight: 700; background: #f4f4f5; }
+
+    /* Collapse/expand groups */
+    .group-rows { display: table-row-group; }
+    .group-rows.collapsed { display: none; }
+
+    /* Capital gains */
+    .cg-stcg { color: #b45309; }
+    .cg-ltcg { color: #166534; }
+    .cg-exempt { color: #71717a; }
+
+    /* Period dropdown */
+    .period-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
+
+    /* Balance sheet two-column */
+    .bs-col { width: 50%; vertical-align: top; }
+
+    /* Print / export preview */
+    @media print {
+      aside, .no-print { display: none !important; }
+      main { margin: 0; }
+    }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1 no-print">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i><span class="tooltip">Dashboard</span>
+    </a>
+    <a href="02-transactions.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="list" class="w-4 h-4"></i><span class="tooltip">Transactions</span>
+    </a>
+    <a href="04-accounts.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layers" class="w-4 h-4"></i><span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="05-bank-import.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="upload" class="w-4 h-4"></i><span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i><span class="tooltip">Reports</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i><span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="settings" class="w-4 h-4"></i><span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 flex flex-col bg-white">
+
+    <!-- Header -->
+    <div class="h-14 shrink-0 border-b border-zinc-200 flex items-center px-6 gap-4 no-print">
+      <span class="font-medium text-sm">Reports</span>
+      <div class="flex-1"></div>
+      <!-- Period selector -->
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-zinc-500">Period</span>
+        <select id="periodSelect" onchange="updatePeriodLabel()" class="period-select text-xs font-medium border border-zinc-200 rounded-lg px-3 py-1.5 bg-white text-zinc-900 cursor-pointer focus:outline-none focus:ring-1 focus:ring-zinc-400">
+          <option value="fy2526" selected>FY 2025–26 (Apr 2025 – Mar 2026)</option>
+          <option value="fy2425">FY 2024–25 (Apr 2024 – Mar 2025)</option>
+          <option value="q1">Q1 FY26 (Apr – Jun 2025)</option>
+          <option value="q2">Q2 FY26 (Jul – Sep 2025)</option>
+          <option value="custom">Custom range…</option>
+        </select>
+      </div>
+      <button onclick="window.print()" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-zinc-700 border border-zinc-200 rounded-lg cursor-pointer hover:bg-zinc-50 transition-colors">
+        <i data-lucide="download" class="w-3.5 h-3.5"></i> Export PDF
+      </button>
+    </div>
+
+    <!-- Report type tabs -->
+    <div class="shrink-0 border-b border-zinc-200 px-6 flex gap-0 no-print">
+      <button onclick="switchReport('pl')" id="tab-pl" class="report-tab active text-sm px-4 py-3 cursor-pointer bg-transparent border-none">P&amp;L</button>
+      <button onclick="switchReport('bs')" id="tab-bs" class="report-tab text-sm px-4 py-3 cursor-pointer bg-transparent border-none">Balance Sheet</button>
+      <button onclick="switchReport('tb')" id="tab-tb" class="report-tab text-sm px-4 py-3 cursor-pointer bg-transparent border-none">Trial Balance</button>
+      <button onclick="switchReport('cf')" id="tab-cf" class="report-tab text-sm px-4 py-3 cursor-pointer bg-transparent border-none">Cash Flow</button>
+      <button onclick="switchReport('cg')" id="tab-cg" class="report-tab text-sm px-4 py-3 cursor-pointer bg-transparent border-none">Capital Gains</button>
+    </div>
+
+    <!-- Report body -->
+    <div class="flex-1 overflow-y-auto px-6 py-6">
+
+      <!-- ─────────────────────────────────────────
+           P&L REPORT
+      ───────────────────────────────────────── -->
+      <div id="report-pl" class="report-panel active max-w-2xl mx-auto">
+        <div class="mb-5">
+          <h2 class="text-base font-semibold text-zinc-900">Profit & Loss Statement</h2>
+          <p class="text-xs text-zinc-500 mt-0.5" id="pl-period-label">For the period April 1, 2025 – March 31, 2026</p>
+        </div>
+
+        <table class="w-full text-sm border-collapse">
+
+          <!-- INCOME -->
+          <tbody>
+            <tr class="ledger-section-header">
+              <td colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Income</td>
+            </tr>
+
+            <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('pl-di')">
+              <td class="px-3 py-2 pl-5 flex items-center gap-1.5">
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-pl-di"></i>
+                Direct Income
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹15,60,000</td>
+            </tr>
+          </tbody>
+          <tbody id="pl-di" class="group-rows">
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Salary Income</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">14,40,000</td>
+            </tr>
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Freelance Income</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">1,20,000</td>
+            </tr>
+          </tbody>
+          <tbody>
+            <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('pl-ii')">
+              <td class="px-3 py-2 pl-5 flex items-center gap-1.5">
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-pl-ii"></i>
+                Indirect Income
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹8,420</td>
+            </tr>
+          </tbody>
+          <tbody id="pl-ii" class="group-rows">
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Interest Income</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">8,420</td>
+            </tr>
+          </tbody>
+          <tbody>
+            <tr class="ledger-total">
+              <td class="px-3 py-2.5 pl-5 font-semibold text-zinc-900">Total Income</td>
+              <td class="px-3 py-2.5 text-right font-mono font-semibold text-zinc-900">₹15,68,420</td>
+            </tr>
+
+            <!-- EXPENSES -->
+            <tr class="ledger-section-header">
+              <td colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Expenses</td>
+            </tr>
+
+            <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('pl-de')">
+              <td class="px-3 py-2 pl-5 flex items-center gap-1.5">
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-pl-de"></i>
+                Direct Expenses
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹0</td>
+            </tr>
+          </tbody>
+          <tbody id="pl-de" class="group-rows">
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-400 italic">No accounts</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-400">—</td>
+            </tr>
+          </tbody>
+          <tbody>
+            <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('pl-ie')">
+              <td class="px-3 py-2 pl-5 flex items-center gap-1.5">
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-pl-ie"></i>
+                Indirect Expenses
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹5,44,240</td>
+            </tr>
+          </tbody>
+          <tbody id="pl-ie" class="group-rows">
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Rent</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">3,00,000</td>
+            </tr>
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Electricity Expense</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">28,800</td>
+            </tr>
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Subscriptions Expense</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">12,640</td>
+            </tr>
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Depreciation</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">52,000</td>
+            </tr>
+            <tr class="ledger-account hover:bg-zinc-50">
+              <td class="px-3 py-1.5 pl-12 text-zinc-600">Other Expenses</td>
+              <td class="px-3 py-1.5 text-right font-mono text-zinc-700">1,50,800</td>
+            </tr>
+          </tbody>
+          <tbody>
+            <tr class="ledger-total">
+              <td class="px-3 py-2.5 pl-5 font-semibold text-zinc-900">Total Expenses</td>
+              <td class="px-3 py-2.5 text-right font-mono font-semibold text-zinc-900">₹5,44,240</td>
+            </tr>
+            <tr class="ledger-grand">
+              <td class="px-3 py-3 pl-5 text-zinc-900">Net Profit</td>
+              <td class="px-3 py-3 text-right font-mono text-emerald-700">₹10,24,180</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           BALANCE SHEET
+      ───────────────────────────────────────── -->
+      <div id="report-bs" class="report-panel max-w-4xl mx-auto">
+        <div class="mb-5">
+          <h2 class="text-base font-semibold text-zinc-900">Balance Sheet</h2>
+          <p class="text-xs text-zinc-500 mt-0.5" id="bs-period-label">As at March 31, 2026</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-8">
+          <!-- LIABILITIES -->
+          <div>
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="ledger-section-header">
+                  <th colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider text-left">Liabilities</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('bs-ca')">
+                  <td class="px-3 py-2 pl-3 flex items-center gap-1.5">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-bs-ca"></i>
+                    Capital Account
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-zinc-900">₹24,18,000</td>
+                </tr>
+              </tbody>
+              <tbody id="bs-ca" class="group-rows">
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Capital</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">14,00,000</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Reserves & Surplus</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">10,18,000</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('bs-cl')">
+                  <td class="px-3 py-2 pl-3 flex items-center gap-1.5">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-bs-cl"></i>
+                    Current Liabilities
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-zinc-900">₹42,800</td>
+                </tr>
+              </tbody>
+              <tbody id="bs-cl" class="group-rows">
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Output CGST</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">10,800</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Output SGST</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">10,800</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">HDFC Credit Card</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">21,200</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="ledger-total">
+                  <td class="px-3 py-2.5 font-semibold text-zinc-900">Total Liabilities</td>
+                  <td class="px-3 py-2.5 text-right font-mono font-semibold text-zinc-900">₹24,60,800</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- ASSETS -->
+          <div>
+            <table class="w-full text-sm border-collapse">
+              <thead>
+                <tr class="ledger-section-header">
+                  <th colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider text-left">Assets</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('bs-fa')">
+                  <td class="px-3 py-2 pl-3 flex items-center gap-1.5">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-bs-fa"></i>
+                    Fixed Assets
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-zinc-900">₹1,30,000</td>
+                </tr>
+              </tbody>
+              <tbody id="bs-fa" class="group-rows">
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">MacBook Pro</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">2,00,000</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-400 italic">Accum. Dep. — MacBook Pro</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-400">(70,000)</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('bs-inv')">
+                  <td class="px-3 py-2 pl-3 flex items-center gap-1.5">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-bs-inv"></i>
+                    Investments
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-zinc-900">₹10,80,000</td>
+                </tr>
+              </tbody>
+              <tbody id="bs-inv" class="group-rows">
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Nifty 50 Index Fund</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">6,80,000</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">HDFC FD</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">4,00,000</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="ledger-group cursor-pointer hover:bg-zinc-50" onclick="toggleGroup('bs-cura')">
+                  <td class="px-3 py-2 pl-3 flex items-center gap-1.5">
+                    <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform" id="icon-bs-cura"></i>
+                    Current Assets
+                  </td>
+                  <td class="px-3 py-2 text-right font-mono text-zinc-900">₹12,50,800</td>
+                </tr>
+              </tbody>
+              <tbody id="bs-cura" class="group-rows">
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">HDFC Bank</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">8,40,000</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Axis Bank</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">3,80,000</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Cash in Hand</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">12,400</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">Input CGST</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">8,200</td>
+                </tr>
+                <tr class="ledger-account hover:bg-zinc-50">
+                  <td class="px-3 py-1.5 pl-10 text-zinc-600">TDS Receivable</td>
+                  <td class="px-3 py-1.5 text-right font-mono text-zinc-700">10,200</td>
+                </tr>
+              </tbody>
+              <tbody>
+                <tr class="ledger-total">
+                  <td class="px-3 py-2.5 font-semibold text-zinc-900">Total Assets</td>
+                  <td class="px-3 py-2.5 text-right font-mono font-semibold text-zinc-900">₹24,60,800</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Balance check -->
+        <div class="mt-5 flex items-center gap-2 text-xs text-emerald-700 bg-emerald-50 rounded-xl px-4 py-2.5 border border-emerald-200">
+          <i data-lucide="check-circle-2" class="w-3.5 h-3.5 shrink-0"></i>
+          Assets = Liabilities + Equity · Balance sheet is balanced.
+        </div>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           TRIAL BALANCE
+      ───────────────────────────────────────── -->
+      <div id="report-tb" class="report-panel max-w-2xl mx-auto">
+        <div class="mb-5">
+          <h2 class="text-base font-semibold text-zinc-900">Trial Balance</h2>
+          <p class="text-xs text-zinc-500 mt-0.5">As at March 31, 2026</p>
+        </div>
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr class="ledger-section-header text-xs text-zinc-500 uppercase tracking-wider">
+              <th class="px-3 py-2.5 text-left font-medium">Account</th>
+              <th class="px-3 py-2.5 text-right font-medium">Debit</th>
+              <th class="px-3 py-2.5 text-right font-medium">Credit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Capital</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">14,00,000</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Reserves & Surplus</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">10,18,000</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">HDFC Credit Card</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">21,200</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Output CGST</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">10,800</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Output SGST</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">10,800</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">MacBook Pro</td><td class="px-3 py-2 text-right font-mono text-zinc-700">2,00,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Accum. Dep. — MacBook Pro</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">70,000</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Nifty 50 Index Fund</td><td class="px-3 py-2 text-right font-mono text-zinc-700">6,80,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">HDFC FD</td><td class="px-3 py-2 text-right font-mono text-zinc-700">4,00,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">HDFC Bank</td><td class="px-3 py-2 text-right font-mono text-zinc-700">8,40,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Axis Bank</td><td class="px-3 py-2 text-right font-mono text-zinc-700">3,80,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Cash in Hand</td><td class="px-3 py-2 text-right font-mono text-zinc-700">12,400</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Input CGST</td><td class="px-3 py-2 text-right font-mono text-zinc-700">8,200</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">TDS Receivable</td><td class="px-3 py-2 text-right font-mono text-zinc-700">10,200</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Salary Income</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">14,40,000</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Freelance Income</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">1,20,000</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Interest Income</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td><td class="px-3 py-2 text-right font-mono text-zinc-700">8,420</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Rent</td><td class="px-3 py-2 text-right font-mono text-zinc-700">3,00,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Electricity Expense</td><td class="px-3 py-2 text-right font-mono text-zinc-700">28,800</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Subscriptions Expense</td><td class="px-3 py-2 text-right font-mono text-zinc-700">12,640</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Depreciation</td><td class="px-3 py-2 text-right font-mono text-zinc-700">52,000</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+            <tr class="border-b border-zinc-100 hover:bg-zinc-50"><td class="px-3 py-2 text-zinc-600">Other Expenses</td><td class="px-3 py-2 text-right font-mono text-zinc-700">1,50,800</td><td class="px-3 py-2 text-right font-mono text-zinc-400">—</td></tr>
+          </tbody>
+          <tfoot>
+            <tr class="ledger-grand">
+              <td class="px-3 py-3 font-semibold">Total</td>
+              <td class="px-3 py-3 text-right font-mono font-semibold">₹31,75,040</td>
+              <td class="px-3 py-3 text-right font-mono font-semibold">₹31,75,040</td>
+            </tr>
+            <tr>
+              <td colspan="3" class="px-3 pt-2 pb-1">
+                <div class="flex items-center gap-2 text-xs text-emerald-700">
+                  <i data-lucide="check-circle-2" class="w-3.5 h-3.5 shrink-0"></i>
+                  Debits = Credits · Books are balanced.
+                </div>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           CASH FLOW
+      ───────────────────────────────────────── -->
+      <div id="report-cf" class="report-panel max-w-2xl mx-auto">
+        <div class="mb-5">
+          <h2 class="text-base font-semibold text-zinc-900">Cash Flow Statement</h2>
+          <p class="text-xs text-zinc-500 mt-0.5">For the period April 1, 2025 – March 31, 2026 · Indirect method</p>
+        </div>
+        <table class="w-full text-sm border-collapse">
+          <tbody>
+            <!-- Operating -->
+            <tr class="ledger-section-header">
+              <td colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Operating Activities</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Net Profit</td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹10,24,180</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Add: Depreciation</td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">52,000</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Change in GST payable</td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-900">21,600</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Change in TDS receivable</td>
+              <td class="px-3 py-2 text-right font-mono text-red-600">(10,200)</td>
+            </tr>
+            <tr class="ledger-subtotal">
+              <td class="px-3 py-2.5 pl-5 font-medium text-zinc-900">Cash from Operations</td>
+              <td class="px-3 py-2.5 text-right font-mono font-medium text-zinc-900">₹10,87,580</td>
+            </tr>
+
+            <!-- Investing -->
+            <tr class="ledger-section-header">
+              <td colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Investing Activities</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Purchase of MacBook Pro</td>
+              <td class="px-3 py-2 text-right font-mono text-red-600">(2,00,000)</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Investment in Nifty 50 Index Fund</td>
+              <td class="px-3 py-2 text-right font-mono text-red-600">(6,80,000)</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">HDFC Fixed Deposit</td>
+              <td class="px-3 py-2 text-right font-mono text-red-600">(4,00,000)</td>
+            </tr>
+            <tr class="ledger-subtotal">
+              <td class="px-3 py-2.5 pl-5 font-medium text-zinc-900">Cash from Investing</td>
+              <td class="px-3 py-2.5 text-right font-mono font-medium text-red-600">(₹12,80,000)</td>
+            </tr>
+
+            <!-- Financing -->
+            <tr class="ledger-section-header">
+              <td colspan="2" class="px-3 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Financing Activities</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-400 italic">No activity</td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-400">—</td>
+            </tr>
+            <tr class="ledger-subtotal">
+              <td class="px-3 py-2.5 pl-5 font-medium text-zinc-900">Cash from Financing</td>
+              <td class="px-3 py-2.5 text-right font-mono font-medium text-zinc-400">₹0</td>
+            </tr>
+
+            <!-- Net change -->
+            <tr class="ledger-grand">
+              <td class="px-3 py-3 text-zinc-900">Net Change in Cash</td>
+              <td class="px-3 py-3 text-right font-mono text-red-600">(₹1,92,420)</td>
+            </tr>
+            <tr class="hover:bg-zinc-50 border-b border-zinc-100">
+              <td class="px-3 py-2 pl-5 text-zinc-600">Opening Cash & Bank Balance</td>
+              <td class="px-3 py-2 text-right font-mono text-zinc-700">14,24,820</td>
+            </tr>
+            <tr class="ledger-total">
+              <td class="px-3 py-2.5 font-semibold text-zinc-900">Closing Cash & Bank Balance</td>
+              <td class="px-3 py-2.5 text-right font-mono font-semibold text-zinc-900">₹12,32,400</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           CAPITAL GAINS
+      ───────────────────────────────────────── -->
+      <div id="report-cg" class="report-panel max-w-3xl mx-auto">
+        <div class="mb-5 flex items-start justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-zinc-900">Capital Gains Report</h2>
+            <p class="text-xs text-zinc-500 mt-0.5">FY 2025–26 · For ITR Schedule CG</p>
+          </div>
+          <div class="flex flex-col items-end gap-1">
+            <div class="flex items-center gap-4 text-xs">
+              <span class="text-zinc-500">Total STCG <span class="font-mono font-medium text-amber-700">₹14,200</span></span>
+              <span class="text-zinc-500">Total LTCG <span class="font-mono font-medium text-emerald-700">₹32,800</span></span>
+            </div>
+            <div class="text-xs text-zinc-400">LTCG exemption used: ₹32,800 of ₹1,25,000</div>
+          </div>
+        </div>
+
+        <!-- STCG section -->
+        <div class="mb-6">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-semibold text-amber-700 uppercase tracking-wider">Short-Term Capital Gains (STCG)</span>
+            <span class="text-xs text-zinc-400">held &lt; 12 months · taxed at 20%</span>
+          </div>
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="ledger-section-header text-xs text-zinc-500 uppercase tracking-wider">
+                <th class="px-3 py-2.5 text-left font-medium">Instrument</th>
+                <th class="px-3 py-2.5 text-right font-medium">Units</th>
+                <th class="px-3 py-2.5 text-right font-medium">Buy date</th>
+                <th class="px-3 py-2.5 text-right font-medium">Buy price</th>
+                <th class="px-3 py-2.5 text-right font-medium">Sell date</th>
+                <th class="px-3 py-2.5 text-right font-medium">Sell price</th>
+                <th class="px-3 py-2.5 text-right font-medium">Gain / Loss</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+                <td class="px-3 py-2.5 font-medium text-zinc-900">Infosys</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">20</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">12 Aug 2025</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹1,420</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">14 Jan 2026</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹1,631</td>
+                <td class="px-3 py-2.5 text-right font-mono text-emerald-700 font-medium">+₹4,220</td>
+              </tr>
+              <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+                <td class="px-3 py-2.5 font-medium text-zinc-900">Nifty BeES</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">50</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">05 Nov 2025</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹240</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">20 Feb 2026</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹240</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-400">₹0</td>
+              </tr>
+              <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+                <td class="px-3 py-2.5 font-medium text-zinc-900">HDFC Bank</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">10</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">22 Sep 2025</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹1,680</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">10 Mar 2026</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹2,660</td>
+                <td class="px-3 py-2.5 text-right font-mono text-emerald-700 font-medium">+₹9,800</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="ledger-total">
+                <td colspan="6" class="px-3 py-2.5 font-semibold text-zinc-900">Total STCG</td>
+                <td class="px-3 py-2.5 text-right font-mono font-semibold text-amber-700">₹14,020</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- LTCG section -->
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Long-Term Capital Gains (LTCG)</span>
+            <span class="text-xs text-zinc-400">held ≥ 12 months · 12.5% above ₹1.25L exemption</span>
+          </div>
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="ledger-section-header text-xs text-zinc-500 uppercase tracking-wider">
+                <th class="px-3 py-2.5 text-left font-medium">Instrument</th>
+                <th class="px-3 py-2.5 text-right font-medium">Units</th>
+                <th class="px-3 py-2.5 text-right font-medium">Buy date</th>
+                <th class="px-3 py-2.5 text-right font-medium">Buy price</th>
+                <th class="px-3 py-2.5 text-right font-medium">Sell date</th>
+                <th class="px-3 py-2.5 text-right font-medium">Sell price</th>
+                <th class="px-3 py-2.5 text-right font-medium">Gain / Loss</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-zinc-100 hover:bg-zinc-50">
+                <td class="px-3 py-2.5 font-medium text-zinc-900">Nifty 50 Index Fund</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">200</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">10 Apr 2024</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹180</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-zinc-500">18 Jun 2025</td>
+                <td class="px-3 py-2.5 text-right font-mono text-zinc-700">₹344</td>
+                <td class="px-3 py-2.5 text-right font-mono text-emerald-700 font-medium">+₹32,800</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="ledger-total">
+                <td colspan="6" class="px-3 py-2.5 font-semibold text-zinc-900">Total LTCG</td>
+                <td class="px-3 py-2.5 text-right font-mono font-semibold text-emerald-700">₹32,800</td>
+              </tr>
+            </tfoot>
+          </table>
+          <!-- LTCG exemption note -->
+          <div class="mt-3 text-xs text-zinc-500 bg-zinc-50 rounded-xl px-4 py-3 border border-zinc-200">
+            ₹32,800 LTCG is within the ₹1,25,000 annual exemption. <span class="font-medium text-zinc-700">Tax payable on LTCG: ₹0.</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end report body -->
+  </main>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  // ── Report tabs ──────────────────────────────────────────
+
+  function switchReport(id) {
+    document.querySelectorAll('.report-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.report-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-' + id).classList.add('active');
+    document.getElementById('report-' + id).classList.add('active');
+  }
+
+  // ── Group collapse ───────────────────────────────────────
+
+  function toggleGroup(id) {
+    const tbody = document.getElementById(id);
+    const icon = document.getElementById('icon-' + id);
+    if (!tbody) return;
+    const collapsed = tbody.classList.toggle('collapsed');
+    if (icon) icon.style.transform = collapsed ? 'rotate(-90deg)' : '';
+  }
+
+  // ── Period label updates ─────────────────────────────────
+
+  function updatePeriodLabel() {
+    const v = document.getElementById('periodSelect').value;
+    const labels = {
+      fy2526: { range: 'For the period April 1, 2025 – March 31, 2026', asAt: 'As at March 31, 2026' },
+      fy2425: { range: 'For the period April 1, 2024 – March 31, 2025', asAt: 'As at March 31, 2025' },
+      q1:     { range: 'For the period April 1 – June 30, 2025',         asAt: 'As at June 30, 2025' },
+      q2:     { range: 'For the period July 1 – September 30, 2025',     asAt: 'As at September 30, 2025' },
+      custom: { range: 'Custom period',                                   asAt: 'Custom date' },
+    };
+    const l = labels[v] || labels.fy2526;
+    const pl = document.getElementById('pl-period-label');
+    const bl = document.getElementById('bs-period-label');
+    if (pl) pl.textContent = l.range;
+    if (bl) bl.textContent = l.asAt;
+  }
+</script>
+</body>
+</html>

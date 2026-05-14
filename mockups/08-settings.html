@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Settings</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+
+    /* Settings nav */
+    .settings-nav-item { transition: all 120ms; cursor: pointer; }
+    .settings-nav-item.active { background: #f4f4f5; color: #18181b; font-weight: 500; }
+    .settings-nav-item:not(.active) { color: #71717a; }
+    .settings-nav-item:not(.active):hover { background: #f9f9f9; color: #3f3f46; }
+
+    /* Panels */
+    .settings-panel { display: none; }
+    .settings-panel.active { display: block; }
+
+    /* FY status badges */
+    .fy-active { background: #d1fae5; color: #065f46; }
+    .fy-locked { background: #f3f4f6; color: #6b7280; }
+
+    /* Merchant rules */
+    .rule-row { transition: background 120ms; }
+    .rule-row:hover { background: #f9f9f9; }
+
+    /* Modal overlay */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: none; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: #fff; border-radius: 16px; padding: 24px; width: 440px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+
+    /* LLM status */
+    .conn-ok   { color: #16a34a; }
+    .conn-fail { color: #dc2626; }
+    .conn-idle { color: #71717a; }
+
+    /* Recurring freq */
+    .freq-daily   { background: #dbeafe; color: #1e40af; }
+    .freq-weekly  { background: #ede9fe; color: #5b21b6; }
+    .freq-monthly { background: #d1fae5; color: #065f46; }
+    .freq-yearly  { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i><span class="tooltip">Dashboard</span>
+    </a>
+    <a href="02-transactions.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="list" class="w-4 h-4"></i><span class="tooltip">Transactions</span>
+    </a>
+    <a href="04-accounts.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layers" class="w-4 h-4"></i><span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="05-bank-import.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="upload" class="w-4 h-4"></i><span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="06-reports.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i><span class="tooltip">Reports</span>
+    </a>
+    <a href="07-portfolio.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i><span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="settings" class="w-4 h-4"></i><span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Settings layout: nav + content -->
+  <div class="flex-1 min-w-0 flex">
+
+    <!-- Settings nav -->
+    <nav class="w-52 shrink-0 bg-white border-r border-zinc-200 flex flex-col py-4 gap-0.5 px-2">
+      <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wider px-3 mb-1">Settings</p>
+      <button onclick="showPanel('fy')" id="nav-fy" class="settings-nav-item active text-sm rounded-lg px-3 py-2 text-left flex items-center gap-2.5">
+        <i data-lucide="calendar" class="w-4 h-4 shrink-0"></i> Financial Years
+      </button>
+      <button onclick="showPanel('recurring')" id="nav-recurring" class="settings-nav-item text-sm rounded-lg px-3 py-2 text-left flex items-center gap-2.5">
+        <i data-lucide="repeat" class="w-4 h-4 shrink-0"></i> Recurring
+      </button>
+      <button onclick="showPanel('merchant')" id="nav-merchant" class="settings-nav-item text-sm rounded-lg px-3 py-2 text-left flex items-center gap-2.5">
+        <i data-lucide="zap" class="w-4 h-4 shrink-0"></i> Merchant Rules
+      </button>
+      <button onclick="showPanel('ai')" id="nav-ai" class="settings-nav-item text-sm rounded-lg px-3 py-2 text-left flex items-center gap-2.5">
+        <i data-lucide="cpu" class="w-4 h-4 shrink-0"></i> AI / LLM
+      </button>
+    </nav>
+
+    <!-- Content -->
+    <main class="flex-1 min-w-0 overflow-y-auto bg-white">
+
+      <!-- ─────────────────────────────────────────
+           FINANCIAL YEARS
+      ───────────────────────────────────────── -->
+      <div id="panel-fy" class="settings-panel active px-8 py-7 max-w-2xl">
+        <div class="flex items-start justify-between mb-6">
+          <div>
+            <h2 class="text-base font-semibold text-zinc-900">Financial Years</h2>
+            <p class="text-sm text-zinc-500 mt-0.5">Each FY runs April 1 – March 31. Locking a year is irreversible.</p>
+          </div>
+          <button onclick="openModal('modal-new-fy')" class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg cursor-pointer hover:bg-zinc-700 transition-colors">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i> New FY
+          </button>
+        </div>
+
+        <div class="flex flex-col gap-3">
+
+          <!-- FY 2025-26: active -->
+          <div class="rounded-2xl border border-zinc-200 p-5 flex items-center gap-4">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-zinc-900 text-sm">FY 2025–26</span>
+                <span class="fy-active text-xs px-2 py-0.5 rounded-full font-medium">Active</span>
+              </div>
+              <p class="text-xs text-zinc-500">Apr 1, 2025 – Mar 31, 2026 · 412 transactions</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="openModal('modal-opening-bal')" class="text-xs text-zinc-600 border border-zinc-200 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-zinc-50">Opening balances</button>
+              <button onclick="openModal('modal-lock-fy')" class="text-xs text-red-600 border border-red-200 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-red-50">Lock year</button>
+            </div>
+          </div>
+
+          <!-- FY 2024-25: locked -->
+          <div class="rounded-2xl border border-zinc-200 p-5 flex items-center gap-4 opacity-75">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-zinc-900 text-sm">FY 2024–25</span>
+                <span class="fy-locked text-xs px-2 py-0.5 rounded-full font-medium">Locked</span>
+              </div>
+              <p class="text-xs text-zinc-500">Apr 1, 2024 – Mar 31, 2025 · 384 transactions · Locked Mar 31, 2025</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <a href="06-reports.html" class="text-xs text-zinc-600 border border-zinc-200 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-zinc-50">View reports</a>
+            </div>
+          </div>
+
+          <!-- FY 2023-24: locked -->
+          <div class="rounded-2xl border border-zinc-200 p-5 flex items-center gap-4 opacity-60">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-medium text-zinc-900 text-sm">FY 2023–24</span>
+                <span class="fy-locked text-xs px-2 py-0.5 rounded-full font-medium">Locked</span>
+              </div>
+              <p class="text-xs text-zinc-500">Apr 1, 2023 – Mar 31, 2024 · 291 transactions · Locked Mar 31, 2024</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <a href="06-reports.html" class="text-xs text-zinc-600 border border-zinc-200 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-zinc-50">View reports</a>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Year-end note -->
+        <div class="mt-6 rounded-xl bg-zinc-50 border border-zinc-200 px-4 py-3.5 text-xs text-zinc-600 flex gap-2">
+          <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-zinc-400"></i>
+          <div>
+            <p class="font-medium text-zinc-700 mb-0.5">Year-end closing</p>
+            <p>When you lock a year, net profit is automatically transferred to Reserves &amp; Surplus. Depreciation entries should be posted before locking — the system will warn if any fixed assets have unposted depreciation.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           RECURRING TRANSACTIONS
+      ───────────────────────────────────────── -->
+      <div id="panel-recurring" class="settings-panel px-8 py-7 max-w-3xl">
+        <div class="mb-6">
+          <h2 class="text-base font-semibold text-zinc-900">Recurring Transactions</h2>
+          <p class="text-sm text-zinc-500 mt-0.5">Schedules that generate a transaction for review on each due date. If not actioned by end of day, they auto-post as-is.</p>
+        </div>
+
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr class="text-xs text-zinc-500 uppercase tracking-wide border-b border-zinc-200">
+              <th class="pb-2.5 text-left font-medium">Narration</th>
+              <th class="pb-2.5 px-4 text-left font-medium">Frequency</th>
+              <th class="pb-2.5 px-4 text-right font-medium">Amount</th>
+              <th class="pb-2.5 px-4 text-left font-medium">Next due</th>
+              <th class="pb-2.5 px-4 text-left font-medium">Until</th>
+              <th class="pb-2.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4">
+                <p class="font-medium text-zinc-900">Rent — Koramangala</p>
+                <p class="text-xs text-zinc-400 mt-0.5">PAY · HDFC Bank → Rent</p>
+              </td>
+              <td class="py-3 px-4"><span class="freq-monthly text-xs px-2 py-0.5 rounded-full font-medium">Monthly</span></td>
+              <td class="py-3 px-4 text-right font-mono text-zinc-700">₹25,000</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">01 Jun 2025</td>
+              <td class="py-3 px-4 text-xs text-zinc-400">No end</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button onclick="openModal('modal-delete-recurring')" class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4">
+                <p class="font-medium text-zinc-900">Spotify subscription</p>
+                <p class="text-xs text-zinc-400 mt-0.5">PAY · HDFC Bank → Subscriptions Expense</p>
+              </td>
+              <td class="py-3 px-4"><span class="freq-monthly text-xs px-2 py-0.5 rounded-full font-medium">Monthly</span></td>
+              <td class="py-3 px-4 text-right font-mono text-zinc-700">₹179</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">04 Jun 2025</td>
+              <td class="py-3 px-4 text-xs text-zinc-400">No end</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4">
+                <p class="font-medium text-zinc-900">PPF contribution</p>
+                <p class="text-xs text-zinc-400 mt-0.5">PAY · HDFC Bank → PPF Account</p>
+              </td>
+              <td class="py-3 px-4"><span class="freq-monthly text-xs px-2 py-0.5 rounded-full font-medium">Monthly</span></td>
+              <td class="py-3 px-4 text-right font-mono text-zinc-700">₹12,000</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">05 Jun 2025</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">05 Mar 2026</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4">
+                <p class="font-medium text-zinc-900">SBI Nifty 50 SIP</p>
+                <p class="text-xs text-zinc-400 mt-0.5">PAY · HDFC Bank → Nifty 50 Index Fund</p>
+              </td>
+              <td class="py-3 px-4"><span class="freq-monthly text-xs px-2 py-0.5 rounded-full font-medium">Monthly</span></td>
+              <td class="py-3 px-4 text-right font-mono text-zinc-700">₹10,000</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">10 Jun 2025</td>
+              <td class="py-3 px-4 text-xs text-zinc-400">No end</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4">
+                <p class="font-medium text-zinc-900">Domain renewal — palash.dev</p>
+                <p class="text-xs text-zinc-400 mt-0.5">PAY · HDFC Bank → Subscriptions Expense</p>
+              </td>
+              <td class="py-3 px-4"><span class="freq-yearly text-xs px-2 py-0.5 rounded-full font-medium">Yearly</span></td>
+              <td class="py-3 px-4 text-right font-mono text-zinc-700">₹1,200</td>
+              <td class="py-3 px-4 font-mono text-xs text-zinc-600">22 Nov 2025</td>
+              <td class="py-3 px-4 text-xs text-zinc-400">No end</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="text-xs text-zinc-400 mt-4">Recurring transactions are created from the transaction entry sheet. Edit a schedule here to change its amount, frequency, or end date.</p>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           MERCHANT RULES
+      ───────────────────────────────────────── -->
+      <div id="panel-merchant" class="settings-panel px-8 py-7 max-w-2xl">
+        <div class="flex items-start justify-between mb-6">
+          <div>
+            <h2 class="text-base font-semibold text-zinc-900">Merchant Rules</h2>
+            <p class="text-sm text-zinc-500 mt-0.5">Saved mappings applied automatically during bank import before AI suggestions.</p>
+          </div>
+        </div>
+
+        <table class="w-full text-sm border-collapse">
+          <thead>
+            <tr class="text-xs text-zinc-500 uppercase tracking-wide border-b border-zinc-200">
+              <th class="pb-2.5 text-left font-medium">Merchant pattern</th>
+              <th class="pb-2.5 px-6 text-left font-medium">Maps to account</th>
+              <th class="pb-2.5 px-4 text-left font-medium">Type</th>
+              <th class="pb-2.5 px-4 text-right font-medium">Used</th>
+              <th class="pb-2.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">BESCOM*</td>
+              <td class="py-3 px-6 text-zinc-700">Electricity Expense</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Indirect Expense</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">12×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">SPOTIFY*</td>
+              <td class="py-3 px-6 text-zinc-700">Subscriptions Expense</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Indirect Expense</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">14×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">SALARY CREDIT*</td>
+              <td class="py-3 px-6 text-zinc-700">Salary Income</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Direct Income</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">13×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">NETFLIX*</td>
+              <td class="py-3 px-6 text-zinc-700">Subscriptions Expense</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Indirect Expense</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">8×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">IRCTC*</td>
+              <td class="py-3 px-6 text-zinc-700">Travel Expense</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Indirect Expense</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">4×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+            <tr class="rule-row border-b border-zinc-100">
+              <td class="py-3 pr-4 font-mono text-xs text-zinc-700">BBNOW* / BLINKIT*</td>
+              <td class="py-3 px-6 text-zinc-700">Groceries Expense</td>
+              <td class="py-3 px-4 text-xs text-zinc-500">Indirect Expense</td>
+              <td class="py-3 px-4 text-right font-mono text-xs text-zinc-400">31×</td>
+              <td class="py-3 text-right">
+                <div class="flex items-center gap-1 justify-end">
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer"><i data-lucide="pencil" class="w-3.5 h-3.5"></i></button>
+                  <button class="p-1.5 rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="text-xs text-zinc-400 mt-4">Rules are matched case-insensitively. Use <code class="font-mono bg-zinc-100 px-1 rounded">*</code> as a wildcard. Rules added here or saved during bank import.</p>
+      </div>
+
+      <!-- ─────────────────────────────────────────
+           AI / LLM
+      ───────────────────────────────────────── -->
+      <div id="panel-ai" class="settings-panel px-8 py-7 max-w-xl">
+        <div class="mb-6">
+          <h2 class="text-base font-semibold text-zinc-900">AI / LLM</h2>
+          <p class="text-sm text-zinc-500 mt-0.5">Stow uses a local OpenAI-compatible inference server for NL entry and bank import parsing. No data leaves your machine.</p>
+        </div>
+
+        <div class="flex flex-col gap-5">
+
+          <!-- Base URL -->
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1.5">
+              Server URL
+              <span class="text-zinc-400 font-normal ml-1">STOW_LLM_BASE_URL</span>
+            </label>
+            <input type="text" id="llmUrl" value="http://localhost:11434/v1" class="w-full border border-zinc-200 rounded-xl px-3.5 py-2 text-sm font-mono text-zinc-900 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-300" />
+            <p class="text-xs text-zinc-400 mt-1.5">Ollama default is <code class="font-mono bg-zinc-100 px-1 rounded">http://localhost:11434/v1</code> · oMLX default is <code class="font-mono bg-zinc-100 px-1 rounded">http://localhost:10240/v1</code></p>
+          </div>
+
+          <!-- Model name -->
+          <div>
+            <label class="block text-xs font-medium text-zinc-700 mb-1.5">
+              Model name
+              <span class="text-zinc-400 font-normal ml-1">STOW_LLM_MODEL</span>
+            </label>
+            <input type="text" id="llmModel" value="qwen3:30b" class="w-full border border-zinc-200 rounded-xl px-3.5 py-2 text-sm font-mono text-zinc-900 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-300" />
+            <p class="text-xs text-zinc-400 mt-1.5">The model must support function calling (tool use). Qwen3, Llama 3.1+, Mistral v0.3+ all work.</p>
+          </div>
+
+          <!-- Connection status + test -->
+          <div class="flex items-center gap-3">
+            <button onclick="testConnection()" class="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-zinc-700 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50 transition-colors">
+              <i data-lucide="plug" class="w-3.5 h-3.5"></i> Test connection
+            </button>
+            <div id="connStatus" class="flex items-center gap-1.5 text-xs conn-idle">
+              <i data-lucide="minus-circle" class="w-3.5 h-3.5"></i>
+              <span id="connMsg">Not tested</span>
+            </div>
+          </div>
+
+          <!-- Save -->
+          <div class="pt-1">
+            <button onclick="saveAI()" class="px-5 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700 transition-colors">
+              Save
+            </button>
+          </div>
+
+          <!-- Info box -->
+          <div class="rounded-xl bg-zinc-50 border border-zinc-200 px-4 py-3.5 text-xs text-zinc-600 flex gap-2">
+            <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-zinc-400"></i>
+            <div class="flex flex-col gap-1">
+              <p class="font-medium text-zinc-700">Used for</p>
+              <ul class="list-disc list-inside space-y-0.5 text-zinc-500">
+                <li>Natural language transaction entry (dashboard)</li>
+                <li>Bank statement parsing (PDF text extraction → structured rows)</li>
+                <li>Account mapping suggestions during import</li>
+              </ul>
+              <p class="mt-1.5">Settings are stored in <code class="font-mono bg-zinc-100 px-1 rounded">~/.stow/config</code> and can also be set as environment variables.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────
+     MODALS
+───────────────────────────────────────── -->
+
+<!-- New FY modal -->
+<div id="modal-new-fy" class="modal-overlay" onclick="closeModalOutside(event, 'modal-new-fy')">
+  <div class="modal">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="font-semibold text-zinc-900">Open new financial year</h3>
+      <button onclick="closeModal('modal-new-fy')" class="text-zinc-400 hover:text-zinc-700 cursor-pointer"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="flex flex-col gap-4">
+      <div>
+        <label class="text-xs font-medium text-zinc-700 block mb-1.5">Financial year</label>
+        <select class="w-full border border-zinc-200 rounded-xl px-3 py-2 text-sm text-zinc-900 bg-white focus:outline-none focus:ring-2 focus:ring-zinc-300 appearance-none">
+          <option>FY 2026–27 (Apr 1, 2026 – Mar 31, 2027)</option>
+        </select>
+      </div>
+      <div class="rounded-xl bg-blue-50 border border-blue-100 px-3.5 py-3 text-xs text-blue-700 flex gap-2">
+        <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 mt-0.5"></i>
+        <p>After opening, you'll be taken to the opening balances screen to set starting balances for all accounts. You can also do this later.</p>
+      </div>
+      <div class="flex gap-3 pt-1">
+        <button onclick="closeModal('modal-new-fy')" class="flex-1 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">Cancel</button>
+        <button class="flex-1 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700">Open FY 2026–27</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Lock FY confirmation modal -->
+<div id="modal-lock-fy" class="modal-overlay" onclick="closeModalOutside(event, 'modal-lock-fy')">
+  <div class="modal">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="font-semibold text-zinc-900">Lock FY 2025–26?</h3>
+      <button onclick="closeModal('modal-lock-fy')" class="text-zinc-400 hover:text-zinc-700 cursor-pointer"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <div class="flex flex-col gap-4">
+      <div class="rounded-xl bg-red-50 border border-red-200 px-3.5 py-3 text-sm text-red-800 flex gap-2">
+        <i data-lucide="alert-triangle" class="w-4 h-4 shrink-0 mt-0.5 text-red-500"></i>
+        <div>
+          <p class="font-medium mb-1">This cannot be undone.</p>
+          <p class="text-xs text-red-700">Locking will: post net profit (₹10,24,180) to Reserves &amp; Surplus, mark all 412 transactions as read-only, and prevent any further entries in this year.</p>
+        </div>
+      </div>
+      <div class="rounded-xl bg-amber-50 border border-amber-200 px-3.5 py-3 text-xs text-amber-800 flex gap-2">
+        <i data-lucide="info" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500"></i>
+        <p><span class="font-medium">1 fixed asset</span> has unposted depreciation (MacBook Pro — ₹52,000). Post the depreciation Journal entry before locking.</p>
+      </div>
+      <div class="flex gap-3 pt-1">
+        <button onclick="closeModal('modal-lock-fy')" class="flex-1 py-2 text-sm font-medium text-zinc-700 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">Cancel</button>
+        <button class="flex-1 py-2 text-sm font-medium text-white bg-red-600 rounded-xl cursor-pointer hover:bg-red-700">Lock year</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Opening balances modal -->
+<div id="modal-opening-bal" class="modal-overlay" onclick="closeModalOutside(event, 'modal-opening-bal')">
+  <div class="modal" style="width:520px">
+    <div class="flex items-center justify-between mb-5">
+      <h3 class="font-semibold text-zinc-900">Opening balances — FY 2025–26</h3>
+      <button onclick="closeModal('modal-opening-bal')" class="text-zinc-400 hover:text-zinc-700 cursor-pointer"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <p class="text-xs text-zinc-500 mb-4">Balances as at April 1, 2025. Opening balances can only be edited until the first transaction in a year is posted.</p>
+    <div class="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+      <!-- Bank accounts -->
+      <p class="text-xs font-medium text-zinc-400 uppercase tracking-wider mt-1">Bank Accounts</p>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">HDFC Bank</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="4,20,000" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">Axis Bank</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="1,80,000" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">Cash in Hand</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="8,200" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <!-- Fixed assets -->
+      <p class="text-xs font-medium text-zinc-400 uppercase tracking-wider mt-2">Fixed Assets</p>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">MacBook Pro</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="2,00,000" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">Accum. Dep. — MacBook Pro</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="18,000" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <!-- Investments -->
+      <p class="text-xs font-medium text-zinc-400 uppercase tracking-wider mt-2">Investments</p>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">Nifty 50 Index Fund</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="3,00,000" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+      <!-- Capital -->
+      <p class="text-xs font-medium text-zinc-400 uppercase tracking-wider mt-2">Capital</p>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-zinc-700 flex-1">Capital Account</span>
+        <div class="relative"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">₹</span><input type="text" value="10,90,200" class="font-mono text-sm border border-zinc-200 rounded-lg pl-7 pr-3 py-1.5 w-36 text-right focus:outline-none focus:ring-1 focus:ring-zinc-400" /></div>
+      </div>
+    </div>
+
+    <!-- Diff check -->
+    <div class="mt-4 flex items-center gap-2 text-xs bg-zinc-50 rounded-xl px-3.5 py-2.5 border border-zinc-200">
+      <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-500 shrink-0"></i>
+      <span class="text-zinc-600">Assets − Liabilities = <span class="font-mono font-medium text-zinc-900">₹0</span> · Balanced.</span>
+    </div>
+
+    <div class="flex gap-3 mt-5">
+      <button onclick="closeModal('modal-opening-bal')" class="flex-1 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">Cancel</button>
+      <button class="flex-1 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700">Save balances</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete recurring confirmation -->
+<div id="modal-delete-recurring" class="modal-overlay" onclick="closeModalOutside(event, 'modal-delete-recurring')">
+  <div class="modal" style="width:380px">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="font-semibold text-zinc-900">Stop recurring?</h3>
+      <button onclick="closeModal('modal-delete-recurring')" class="text-zinc-400 hover:text-zinc-700 cursor-pointer"><i data-lucide="x" class="w-4 h-4"></i></button>
+    </div>
+    <p class="text-sm text-zinc-600 mb-5">Stop <span class="font-medium">Rent — Koramangala</span>? Past transactions are kept; no new ones will be created.</p>
+    <div class="flex gap-3">
+      <button onclick="closeModal('modal-delete-recurring')" class="flex-1 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">Keep it</button>
+      <button onclick="closeModal('modal-delete-recurring')" class="flex-1 py-2 text-sm font-medium text-white bg-red-600 rounded-xl cursor-pointer hover:bg-red-700">Stop schedule</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  function showPanel(id) {
+    document.querySelectorAll('.settings-nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('nav-' + id).classList.add('active');
+    document.getElementById('panel-' + id).classList.add('active');
+  }
+
+  function openModal(id) { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function closeModalOutside(e, id) { if (e.target === document.getElementById(id)) closeModal(id); }
+
+  let testing = false;
+  function testConnection() {
+    if (testing) return;
+    testing = true;
+    const status = document.getElementById('connStatus');
+    const msg    = document.getElementById('connMsg');
+    status.className = 'flex items-center gap-1.5 text-xs conn-idle';
+    status.querySelector('i').setAttribute('data-lucide', 'loader-2');
+    msg.textContent = 'Testing…';
+    lucide.createIcons();
+
+    setTimeout(() => {
+      const ok = Math.random() > 0.25;
+      if (ok) {
+        status.className = 'flex items-center gap-1.5 text-xs conn-ok';
+        status.querySelector('i').setAttribute('data-lucide', 'check-circle-2');
+        msg.textContent = 'Connected · qwen3:30b · 85 tok/s';
+      } else {
+        status.className = 'flex items-center gap-1.5 text-xs conn-fail';
+        status.querySelector('i').setAttribute('data-lucide', 'x-circle');
+        msg.textContent = 'Connection refused — is Ollama running?';
+      }
+      lucide.createIcons();
+      testing = false;
+    }, 1200);
+  }
+
+  function saveAI() {
+    const btn = event.target;
+    btn.textContent = 'Saved';
+    btn.classList.add('opacity-60');
+    setTimeout(() => { btn.textContent = 'Save'; btn.classList.remove('opacity-60'); }, 1800);
+  }
+</script>
+</body>
+</html>

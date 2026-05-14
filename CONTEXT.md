@@ -122,6 +122,13 @@ Investment accounts are split into four sub-types with different tracking needs:
 - User posts the Journal entry (never auto-posted): Debit Depreciation Expense → Credit Accumulated Depreciation
 - Balance Sheet shows gross cost and accumulated depreciation separately
 
+### Recurring Transactions
+- Any transaction type can be set to repeat: Daily, Weekly, Monthly, Yearly
+- On the due date, the transaction appears in the Dashboard "Needs attention" zone for review
+- User can confirm as-is, edit then confirm, or skip
+- If no action is taken by end of day, the transaction auto-posts as-is
+- Recurring schedule stored per transaction: frequency, day-of-period, end date (optional)
+
 ## Reports
 
 All reports are generated server-side and exportable as PDF.

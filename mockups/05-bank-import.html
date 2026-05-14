@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Bank Import</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+
+    /* Steps */
+    .step-panel { display: none; }
+    .step-panel.active { display: flex; flex-direction: column; height: 100%; }
+
+    /* Drop zone */
+    .drop-zone { border: 2px dashed #d4d4d8; transition: border-color 150ms, background 150ms; }
+    .drop-zone.over { border-color: #18181b; background: #f4f4f5; }
+    .drop-zone.has-file { border-style: solid; border-color: #18181b; background: #fafafa; }
+
+    /* Parsing progress */
+    @keyframes progress-bar { from { width: 0% } to { width: 100% } }
+    .parse-bar { animation: progress-bar 2.8s ease-in-out forwards; }
+
+    /* Staging rows */
+    .staging-row { transition: background 120ms; }
+    .staging-row:hover { background: #f4f4f5; }
+    .staging-row.selected { background: #eff6ff; }
+    .staging-row.matched { background: #f0fdf4; }
+    .staging-row.duplicate { background: #fefce8; }
+    .staging-row.ignored { opacity: 0.45; }
+
+    /* Action row expand */
+    .row-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 250ms ease; }
+    .row-detail.open { grid-template-rows: 1fr; }
+    .row-detail > div { overflow: hidden; }
+
+    /* Badges */
+    .badge-new { background: #dbeafe; color: #1e40af; }
+    .badge-dup { background: #fef9c3; color: #854d0e; }
+    .badge-matched { background: #dcfce7; color: #166534; }
+    .badge-ignored { background: #f4f4f5; color: #71717a; }
+
+    /* Account chip select */
+    .acct-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; padding-right: 28px; }
+
+    /* Summary bar */
+    .summary-bar { height: 4px; border-radius: 2px; }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i><span class="tooltip">Dashboard</span>
+    </a>
+    <a href="02-transactions.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="list" class="w-4 h-4"></i><span class="tooltip">Transactions</span>
+    </a>
+    <a href="04-accounts.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layers" class="w-4 h-4"></i><span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="upload" class="w-4 h-4"></i><span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i><span class="tooltip">Reports</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i><span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="settings" class="w-4 h-4"></i><span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 min-w-0 flex flex-col bg-white">
+
+    <!-- Header -->
+    <div class="h-14 shrink-0 border-b border-zinc-200 flex items-center px-6 gap-4">
+      <span class="font-medium text-sm">Bank Import</span>
+      <!-- Step indicator -->
+      <div class="flex items-center gap-2 ml-4" id="stepIndicator">
+        <div class="step-dot flex items-center gap-1.5 text-xs" data-step="1">
+          <div class="w-5 h-5 rounded-full bg-zinc-900 text-white flex items-center justify-center font-medium text-xs step-num">1</div>
+          <span class="step-label font-medium text-zinc-900">Upload</span>
+        </div>
+        <div class="w-6 h-px bg-zinc-200"></div>
+        <div class="step-dot flex items-center gap-1.5 text-xs" data-step="2">
+          <div class="w-5 h-5 rounded-full bg-zinc-200 text-zinc-400 flex items-center justify-center font-medium text-xs step-num">2</div>
+          <span class="step-label text-zinc-400">Review</span>
+        </div>
+        <div class="w-6 h-px bg-zinc-200"></div>
+        <div class="step-dot flex items-center gap-1.5 text-xs" data-step="3">
+          <div class="w-5 h-5 rounded-full bg-zinc-200 text-zinc-400 flex items-center justify-center font-medium text-xs step-num">3</div>
+          <span class="step-label text-zinc-400">Confirm</span>
+        </div>
+      </div>
+      <div class="flex-1"></div>
+      <div id="headerActions"></div>
+    </div>
+
+    <!-- ────────────────────────────────────────────
+         STEP 1: UPLOAD
+    ──────────────────────────────────────────── -->
+    <div id="step1" class="step-panel active flex-col items-center justify-center p-8">
+      <div class="w-full max-w-lg flex flex-col gap-6">
+
+        <!-- Drop zone -->
+        <div id="dropZone" class="drop-zone rounded-2xl p-10 flex flex-col items-center gap-4 cursor-pointer select-none"
+             onclick="document.getElementById('fileInput').click()">
+          <div class="w-12 h-12 rounded-full bg-zinc-100 flex items-center justify-center">
+            <i data-lucide="upload-cloud" class="w-6 h-6 text-zinc-400"></i>
+          </div>
+          <div class="text-center">
+            <p class="text-sm font-medium text-zinc-900">Drop your statement here</p>
+            <p class="text-xs text-zinc-500 mt-1">PDF or CSV · Axis Bank, HDFC, Bank of India, AU Small Finance, Union Bank</p>
+          </div>
+          <button class="text-xs font-medium text-zinc-900 underline underline-offset-2 cursor-pointer">Browse file</button>
+          <input type="file" id="fileInput" class="hidden" accept=".pdf,.csv" />
+        </div>
+
+        <!-- Selected file (shown after pick) -->
+        <div id="selectedFile" class="hidden items-center gap-3 px-4 py-3 rounded-xl border border-zinc-200 bg-zinc-50">
+          <div class="w-8 h-8 rounded-lg bg-zinc-200 flex items-center justify-center shrink-0">
+            <i data-lucide="file-text" class="w-4 h-4 text-zinc-600"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-zinc-900 truncate" id="fileName">statement.pdf</p>
+            <p class="text-xs text-zinc-500" id="fileSize">248 KB</p>
+          </div>
+          <button onclick="clearFile()" class="text-zinc-400 hover:text-zinc-700 cursor-pointer">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+
+        <!-- Parse button -->
+        <button id="parseBtn" onclick="startParsing()" class="hidden w-full py-2.5 rounded-xl bg-zinc-900 text-white text-sm font-medium cursor-pointer hover:bg-zinc-700 transition-colors">
+          Parse statement
+        </button>
+
+        <!-- Parsing progress -->
+        <div id="parsingProgress" class="hidden flex-col gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-5 h-5 rounded-full border-2 border-zinc-300 border-t-zinc-900 animate-spin shrink-0"></div>
+            <p class="text-sm text-zinc-600" id="parseStatus">Reading file…</p>
+          </div>
+          <div class="h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+            <div id="parseBar" class="h-full bg-zinc-900 rounded-full" style="width:0%"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────
+         STEP 2: REVIEW STAGING AREA
+    ──────────────────────────────────────────── -->
+    <div id="step2" class="step-panel flex-col min-h-0">
+
+      <!-- Sub-header: summary bar + filters -->
+      <div class="shrink-0 border-b border-zinc-100 px-6 py-3 flex items-center gap-4 flex-wrap">
+        <!-- Detected bank + account info -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-zinc-500">Detected:</span>
+          <span class="text-xs font-medium text-zinc-900">HDFC Bank · Savings Account ···4521</span>
+          <span class="text-xs text-zinc-400">·</span>
+          <span class="text-xs text-zinc-500">Apr 1 – Apr 30, 2025</span>
+        </div>
+        <!-- Summary chips -->
+        <div class="flex items-center gap-2 ml-auto">
+          <button onclick="filterStaging('all')" id="fAll" class="staging-filter text-xs px-3 py-1 rounded-full bg-zinc-900 text-white font-medium cursor-pointer">All 18</button>
+          <button onclick="filterStaging('new')" id="fNew" class="staging-filter text-xs px-3 py-1 rounded-full bg-zinc-100 text-zinc-600 cursor-pointer hover:bg-zinc-200">New 14</button>
+          <button onclick="filterStaging('dup')" id="fDup" class="staging-filter text-xs px-3 py-1 rounded-full bg-zinc-100 text-zinc-600 cursor-pointer hover:bg-zinc-200">Possible duplicates 3</button>
+          <button onclick="filterStaging('matched')" id="fMatched" class="staging-filter text-xs px-3 py-1 rounded-full bg-zinc-100 text-zinc-600 cursor-pointer hover:bg-zinc-200">Matched 1</button>
+        </div>
+      </div>
+
+      <!-- Account mapping header note -->
+      <div class="shrink-0 bg-blue-50 border-b border-blue-100 px-6 py-2 flex items-center gap-2">
+        <i data-lucide="info" class="w-3.5 h-3.5 text-blue-500 shrink-0"></i>
+        <p class="text-xs text-blue-700">Review account mappings below. Rows without a mapped account won't be imported.</p>
+      </div>
+
+      <!-- Staging table -->
+      <div class="flex-1 overflow-y-auto">
+        <table class="w-full text-sm border-collapse" id="stagingTable">
+          <thead class="sticky top-0 bg-white border-b border-zinc-200 z-10">
+            <tr class="text-xs text-zinc-500 uppercase tracking-wide">
+              <th class="pl-6 pr-3 py-2.5 text-left font-medium w-px">
+                <input type="checkbox" class="rounded" onchange="selectAll(this)" />
+              </th>
+              <th class="px-3 py-2.5 text-left font-medium">Date</th>
+              <th class="px-3 py-2.5 text-left font-medium">Description</th>
+              <th class="px-3 py-2.5 text-right font-medium">Amount</th>
+              <th class="px-3 py-2.5 text-left font-medium">Account</th>
+              <th class="px-3 py-2.5 text-left font-medium">Status</th>
+              <th class="pr-6 py-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="stagingBody">
+
+            <!-- Row 1: new, no account -->
+            <tr class="staging-row border-b border-zinc-100" onclick="toggleRowDetail('r1')" id="row-r1">
+              <td class="pl-6 pr-3 py-3" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rounded" />
+              </td>
+              <td class="px-3 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">02 Apr 2025</td>
+              <td class="px-3 py-3">
+                <p class="text-sm font-medium text-zinc-900 truncate max-w-xs">BESCOM ELECTRICITY BILL</p>
+                <p class="text-xs text-zinc-400 truncate max-w-xs">UPI/CR/25092/BESCOM</p>
+              </td>
+              <td class="px-3 py-3 text-right">
+                <span class="font-mono text-sm text-red-600">−₹2,480</span>
+              </td>
+              <td class="px-3 py-3">
+                <select class="acct-select text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white text-zinc-900 cursor-pointer focus:outline-none focus:ring-1 focus:ring-zinc-400">
+                  <option value="">— pick account —</option>
+                  <option value="elec" selected>Electricity Expense</option>
+                  <option value="util">Utilities Expense</option>
+                  <option value="other">Other Expense</option>
+                </select>
+              </td>
+              <td class="px-3 py-3">
+                <span class="badge-new text-xs px-2 py-0.5 rounded-full font-medium">New</span>
+              </td>
+              <td class="pr-6 py-3 text-right">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 row-chevron transition-transform duration-200" id="chev-r1"></i>
+              </td>
+            </tr>
+            <!-- Row 1 detail -->
+            <tr id="detail-r1" class="border-b border-zinc-100">
+              <td colspan="7" class="p-0">
+                <div class="row-detail" id="rd-r1">
+                  <div>
+                    <div class="px-6 py-3 bg-zinc-50 flex items-start gap-8 text-xs">
+                      <div>
+                        <p class="text-zinc-500 mb-1">Narration</p>
+                        <input type="text" value="Electricity bill — BESCOM April 2025" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-64" />
+                      </div>
+                      <div>
+                        <p class="text-zinc-500 mb-1">Tags</p>
+                        <input type="text" placeholder="e.g. utilities, home" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-500 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-40" />
+                      </div>
+                      <div class="ml-auto flex items-center gap-2">
+                        <button onclick="ignoreRow('r1')" class="px-3 py-1.5 text-xs text-zinc-600 border border-zinc-200 rounded-lg cursor-pointer hover:bg-zinc-100">Ignore</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg cursor-pointer hover:bg-zinc-700">Accept</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 2: new, merchant rule applied -->
+            <tr class="staging-row border-b border-zinc-100" onclick="toggleRowDetail('r2')" id="row-r2">
+              <td class="pl-6 pr-3 py-3" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rounded" />
+              </td>
+              <td class="px-3 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">04 Apr 2025</td>
+              <td class="px-3 py-3">
+                <p class="text-sm font-medium text-zinc-900 truncate max-w-xs">SPOTIFY INDIA</p>
+                <p class="text-xs text-zinc-400 truncate max-w-xs">NEFT/SPOTIFYINDIA/SUB</p>
+              </td>
+              <td class="px-3 py-3 text-right">
+                <span class="font-mono text-sm text-red-600">−₹179</span>
+              </td>
+              <td class="px-3 py-3">
+                <div class="flex items-center gap-1.5">
+                  <select class="acct-select text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white text-zinc-900 cursor-pointer focus:outline-none focus:ring-1 focus:ring-zinc-400">
+                    <option value="subs" selected>Subscriptions Expense</option>
+                    <option value="other">Other Expense</option>
+                  </select>
+                  <span title="Applied from merchant rule" class="text-zinc-400 cursor-help">
+                    <i data-lucide="zap" class="w-3 h-3"></i>
+                  </span>
+                </div>
+              </td>
+              <td class="px-3 py-3">
+                <span class="badge-new text-xs px-2 py-0.5 rounded-full font-medium">New</span>
+              </td>
+              <td class="pr-6 py-3 text-right">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 row-chevron transition-transform duration-200" id="chev-r2"></i>
+              </td>
+            </tr>
+            <tr id="detail-r2" class="border-b border-zinc-100">
+              <td colspan="7" class="p-0">
+                <div class="row-detail" id="rd-r2">
+                  <div>
+                    <div class="px-6 py-3 bg-zinc-50 flex items-start gap-8 text-xs">
+                      <div>
+                        <p class="text-zinc-500 mb-1">Narration</p>
+                        <input type="text" value="Spotify monthly subscription" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-64" />
+                      </div>
+                      <div>
+                        <p class="text-zinc-500 mb-1">Tags</p>
+                        <input type="text" placeholder="e.g. subscriptions" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-500 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-40" />
+                      </div>
+                      <div class="ml-auto flex items-center gap-2">
+                        <button onclick="ignoreRow('r2')" class="px-3 py-1.5 text-xs text-zinc-600 border border-zinc-200 rounded-lg cursor-pointer hover:bg-zinc-100">Ignore</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg cursor-pointer hover:bg-zinc-700">Accept</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 3: duplicate warning -->
+            <tr class="staging-row duplicate border-b border-zinc-100" onclick="toggleRowDetail('r3')" id="row-r3">
+              <td class="pl-6 pr-3 py-3" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rounded" />
+              </td>
+              <td class="px-3 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">07 Apr 2025</td>
+              <td class="px-3 py-3">
+                <p class="text-sm font-medium text-zinc-900 truncate max-w-xs">AMAZON PAY</p>
+                <p class="text-xs text-zinc-400 truncate max-w-xs">UPI/AMAZONPAY/WALLET</p>
+              </td>
+              <td class="px-3 py-3 text-right">
+                <span class="font-mono text-sm text-red-600">−₹1,200</span>
+              </td>
+              <td class="px-3 py-3">
+                <select class="acct-select text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white text-zinc-900 cursor-pointer focus:outline-none focus:ring-1 focus:ring-zinc-400">
+                  <option value="shop" selected>Shopping Expense</option>
+                  <option value="other">Other Expense</option>
+                </select>
+              </td>
+              <td class="px-3 py-3">
+                <span class="badge-dup text-xs px-2 py-0.5 rounded-full font-medium">Possible duplicate</span>
+              </td>
+              <td class="pr-6 py-3 text-right">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 row-chevron transition-transform duration-200" id="chev-r3"></i>
+              </td>
+            </tr>
+            <tr id="detail-r3" class="border-b border-zinc-100">
+              <td colspan="7" class="p-0">
+                <div class="row-detail" id="rd-r3">
+                  <div>
+                    <div class="px-6 py-3 bg-amber-50 border-l-2 border-amber-400 text-xs flex flex-col gap-3">
+                      <div class="flex items-start gap-2">
+                        <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5"></i>
+                        <p class="text-amber-800">A transaction with the same amount on a nearby date already exists: <span class="font-mono font-medium">PAY-2025-031 · ₹1,200 · 07 Apr 2025 · Amazon Pay</span></p>
+                      </div>
+                      <div class="flex items-center gap-2 ml-5">
+                        <button onclick="ignoreRow('r3')" class="px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 border border-amber-300 rounded-lg cursor-pointer hover:bg-amber-200">Skip (it's a duplicate)</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg cursor-pointer hover:bg-zinc-700">Import anyway</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 4: receipt -->
+            <tr class="staging-row border-b border-zinc-100" onclick="toggleRowDetail('r4')" id="row-r4">
+              <td class="pl-6 pr-3 py-3" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rounded" />
+              </td>
+              <td class="px-3 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">10 Apr 2025</td>
+              <td class="px-3 py-3">
+                <p class="text-sm font-medium text-zinc-900 truncate max-w-xs">SALARY CREDIT</p>
+                <p class="text-xs text-zinc-400 truncate max-w-xs">NEFT/INFOSYS BPM/APR SALARY</p>
+              </td>
+              <td class="px-3 py-3 text-right">
+                <span class="font-mono text-sm text-emerald-600">+₹1,20,000</span>
+              </td>
+              <td class="px-3 py-3">
+                <select class="acct-select text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white text-zinc-900 cursor-pointer focus:outline-none focus:ring-1 focus:ring-zinc-400">
+                  <option value="sal" selected>Salary Income</option>
+                  <option value="other">Other Income</option>
+                </select>
+              </td>
+              <td class="px-3 py-3">
+                <span class="badge-new text-xs px-2 py-0.5 rounded-full font-medium">New</span>
+              </td>
+              <td class="pr-6 py-3 text-right">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 row-chevron transition-transform duration-200" id="chev-r4"></i>
+              </td>
+            </tr>
+            <tr id="detail-r4" class="border-b border-zinc-100">
+              <td colspan="7" class="p-0">
+                <div class="row-detail" id="rd-r4">
+                  <div>
+                    <div class="px-6 py-3 bg-zinc-50 flex items-start gap-8 text-xs">
+                      <div>
+                        <p class="text-zinc-500 mb-1">Narration</p>
+                        <input type="text" value="Salary — April 2025" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-64" />
+                      </div>
+                      <div>
+                        <p class="text-zinc-500 mb-1">Tags</p>
+                        <input type="text" value="salary" class="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-40" />
+                      </div>
+                      <div class="ml-auto flex items-center gap-2">
+                        <button onclick="ignoreRow('r4')" class="px-3 py-1.5 text-xs text-zinc-600 border border-zinc-200 rounded-lg cursor-pointer hover:bg-zinc-100">Ignore</button>
+                        <button class="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg cursor-pointer hover:bg-zinc-700">Accept</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- Row 5: matched (already reconciled) -->
+            <tr class="staging-row matched border-b border-zinc-100" onclick="toggleRowDetail('r5')" id="row-r5">
+              <td class="pl-6 pr-3 py-3" onclick="event.stopPropagation()">
+                <input type="checkbox" class="rounded" disabled />
+              </td>
+              <td class="px-3 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">14 Apr 2025</td>
+              <td class="px-3 py-3">
+                <p class="text-sm font-medium text-zinc-900 truncate max-w-xs">PAYTM WALLET LOAD</p>
+                <p class="text-xs text-zinc-400 truncate max-w-xs">IMPS/PAYTM/WALLETRECHARGE</p>
+              </td>
+              <td class="px-3 py-3 text-right">
+                <span class="font-mono text-sm text-red-600">−₹5,000</span>
+              </td>
+              <td class="px-3 py-3">
+                <span class="text-xs text-emerald-700 font-medium">CTR-2025-012</span>
+              </td>
+              <td class="px-3 py-3">
+                <span class="badge-matched text-xs px-2 py-0.5 rounded-full font-medium">Matched</span>
+              </td>
+              <td class="pr-6 py-3 text-right">
+                <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 row-chevron transition-transform duration-200" id="chev-r5"></i>
+              </td>
+            </tr>
+            <tr id="detail-r5" class="border-b border-zinc-100">
+              <td colspan="7" class="p-0">
+                <div class="row-detail" id="rd-r5">
+                  <div>
+                    <div class="px-6 py-3 bg-emerald-50 text-xs flex items-center gap-2">
+                      <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 shrink-0"></i>
+                      <p class="text-emerald-800">Matched to existing transaction <span class="font-mono font-medium">CTR-2025-012</span>. This row will be marked reconciled — no new transaction created.</p>
+                    </div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <!-- More rows placeholder -->
+            <tr class="border-b border-zinc-100">
+              <td colspan="7" class="px-6 py-4 text-center text-xs text-zinc-400">
+                + 13 more rows · scroll to see all
+              </td>
+            </tr>
+
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Bottom action bar -->
+      <div class="shrink-0 border-t border-zinc-200 px-6 py-3 flex items-center gap-3 bg-white">
+        <span class="text-xs text-zinc-500"><span id="acceptedCount">4</span> accepted · <span id="ignoredCount">0</span> ignored · <span id="pendingCount">13</span> pending</span>
+        <div class="flex-1"></div>
+        <button onclick="goStep(1)" class="px-4 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">Back</button>
+        <button onclick="goStep(3)" class="px-4 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700">
+          Review & confirm →
+        </button>
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────
+         STEP 3: CONFIRM SUMMARY
+    ──────────────────────────────────────────── -->
+    <div id="step3" class="step-panel flex-col items-center justify-center p-8">
+      <div class="w-full max-w-lg flex flex-col gap-5">
+
+        <div>
+          <h2 class="text-base font-semibold text-zinc-900">Ready to post</h2>
+          <p class="text-sm text-zinc-500 mt-0.5">Review what's about to be created, then confirm.</p>
+        </div>
+
+        <!-- Summary card -->
+        <div class="rounded-2xl border border-zinc-200 divide-y divide-zinc-100 bg-white">
+          <div class="px-5 py-4 flex items-center justify-between">
+            <span class="text-sm text-zinc-600">New transactions</span>
+            <span class="font-mono text-sm font-medium text-zinc-900">14</span>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between">
+            <span class="text-sm text-zinc-600">Matched (reconciled)</span>
+            <span class="font-mono text-sm font-medium text-emerald-700">1</span>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between">
+            <span class="text-sm text-zinc-600">Skipped / ignored</span>
+            <span class="font-mono text-sm font-medium text-zinc-400">3</span>
+          </div>
+          <div class="px-5 py-4 flex items-center justify-between bg-zinc-50 rounded-b-2xl">
+            <span class="text-sm font-medium text-zinc-900">Net inflow</span>
+            <span class="font-mono text-sm font-semibold text-emerald-600">+₹84,320</span>
+          </div>
+        </div>
+
+        <!-- Merchant rule prompt (shown when user changed a mapping) -->
+        <div class="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3.5 flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <i data-lucide="zap" class="w-3.5 h-3.5 text-zinc-500 shrink-0"></i>
+            <p class="text-xs font-medium text-zinc-700">Save merchant rules for next time?</p>
+          </div>
+          <div class="flex flex-col gap-1.5 pl-5">
+            <label class="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input type="checkbox" class="rounded" checked /> Always map <span class="font-medium">BESCOM ELECTRICITY BILL</span> → Electricity Expense
+            </label>
+            <label class="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input type="checkbox" class="rounded" checked /> Always map <span class="font-medium">SALARY CREDIT (INFOSYS BPM)</span> → Salary Income
+            </label>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-3">
+          <button onclick="goStep(2)" class="flex-1 py-2.5 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">
+            ← Back to review
+          </button>
+          <button onclick="confirmImport()" class="flex-1 py-2.5 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700">
+            Post 14 transactions
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ────────────────────────────────────────────
+         STEP 4: DONE (success state)
+    ──────────────────────────────────────────── -->
+    <div id="step4" class="step-panel flex-col items-center justify-center p-8">
+      <div class="flex flex-col items-center gap-5 max-w-sm text-center">
+        <div class="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center">
+          <i data-lucide="check" class="w-7 h-7 text-emerald-600"></i>
+        </div>
+        <div>
+          <h2 class="text-base font-semibold text-zinc-900">14 transactions posted</h2>
+          <p class="text-sm text-zinc-500 mt-1">1 statement row reconciled. 3 skipped.</p>
+        </div>
+        <div class="flex gap-3">
+          <button onclick="resetImport()" class="px-4 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl cursor-pointer hover:bg-zinc-50">
+            Import another
+          </button>
+          <a href="02-transactions.html" class="px-4 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl cursor-pointer hover:bg-zinc-700 no-underline">
+            View transactions
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  let currentStep = 1;
+  let parseInterval;
+
+  // ── Navigation ──────────────────────────────────────────
+
+  function goStep(n) {
+    document.getElementById('step' + currentStep).classList.remove('active');
+    currentStep = n;
+    document.getElementById('step' + currentStep).classList.add('active');
+    updateStepIndicator(n);
+  }
+
+  function updateStepIndicator(n) {
+    document.querySelectorAll('.step-dot').forEach(dot => {
+      const s = parseInt(dot.dataset.step);
+      const num = dot.querySelector('.step-num');
+      const label = dot.querySelector('.step-label');
+      if (s < n) {
+        num.className = 'w-5 h-5 rounded-full bg-zinc-900 text-white flex items-center justify-center font-medium text-xs step-num';
+        num.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        label.className = 'step-label text-zinc-500 text-xs';
+      } else if (s === n) {
+        num.className = 'w-5 h-5 rounded-full bg-zinc-900 text-white flex items-center justify-center font-medium text-xs step-num';
+        num.textContent = s;
+        label.className = 'step-label font-medium text-zinc-900 text-xs';
+      } else {
+        num.className = 'w-5 h-5 rounded-full bg-zinc-200 text-zinc-400 flex items-center justify-center font-medium text-xs step-num';
+        num.textContent = s;
+        label.className = 'step-label text-zinc-400 text-xs';
+      }
+    });
+  }
+
+  // ── Step 1: Upload ───────────────────────────────────────
+
+  document.getElementById('fileInput').addEventListener('change', function() {
+    if (this.files && this.files[0]) {
+      showFile(this.files[0]);
+    }
+  });
+
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('over');
+    if (e.dataTransfer.files[0]) showFile(e.dataTransfer.files[0]);
+  });
+
+  function showFile(file) {
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = formatSize(file.size);
+    document.getElementById('selectedFile').classList.remove('hidden');
+    document.getElementById('selectedFile').classList.add('flex');
+    document.getElementById('parseBtn').classList.remove('hidden');
+    dz.classList.add('has-file');
+  }
+
+  function clearFile() {
+    document.getElementById('selectedFile').classList.add('hidden');
+    document.getElementById('selectedFile').classList.remove('flex');
+    document.getElementById('parseBtn').classList.add('hidden');
+    dz.classList.remove('has-file');
+    document.getElementById('fileInput').value = '';
+  }
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function startParsing() {
+    document.getElementById('parseBtn').classList.add('hidden');
+    const prog = document.getElementById('parsingProgress');
+    prog.classList.remove('hidden');
+    prog.classList.add('flex');
+
+    const statuses = [
+      [0,   'Reading file…'],
+      [25,  'Extracting text…'],
+      [50,  'Identifying bank & format…'],
+      [72,  'Parsing transactions…'],
+      [90,  'Mapping accounts…'],
+      [100, 'Done — 18 rows found'],
+    ];
+
+    let i = 0;
+    const bar = document.getElementById('parseBar');
+    const status = document.getElementById('parseStatus');
+
+    function tick() {
+      if (i >= statuses.length) {
+        setTimeout(() => goStep(2), 400);
+        return;
+      }
+      const [pct, msg] = statuses[i++];
+      bar.style.width = pct + '%';
+      status.textContent = msg;
+      setTimeout(tick, i === statuses.length ? 600 : 500);
+    }
+    tick();
+  }
+
+  // ── Step 2: Review ───────────────────────────────────────
+
+  let openRow = null;
+
+  function toggleRowDetail(id) {
+    const rd = document.getElementById('rd-' + id);
+    const chev = document.getElementById('chev-' + id);
+    if (openRow && openRow !== id) {
+      document.getElementById('rd-' + openRow).classList.remove('open');
+      document.getElementById('chev-' + openRow).style.transform = '';
+    }
+    if (openRow === id) {
+      rd.classList.remove('open');
+      chev.style.transform = '';
+      openRow = null;
+    } else {
+      rd.classList.add('open');
+      chev.style.transform = 'rotate(180deg)';
+      openRow = id;
+    }
+  }
+
+  function ignoreRow(id) {
+    const row = document.getElementById('row-' + id);
+    row.classList.add('ignored');
+    const rd = document.getElementById('rd-' + id);
+    rd.classList.remove('open');
+    if (openRow === id) openRow = null;
+  }
+
+  function selectAll(cb) {
+    document.querySelectorAll('#stagingBody input[type="checkbox"]:not(:disabled)').forEach(c => c.checked = cb.checked);
+  }
+
+  let currentFilter = 'all';
+  function filterStaging(f) {
+    currentFilter = f;
+    document.querySelectorAll('.staging-filter').forEach(btn => {
+      btn.className = 'staging-filter text-xs px-3 py-1 rounded-full bg-zinc-100 text-zinc-600 cursor-pointer hover:bg-zinc-200';
+    });
+    document.getElementById('f' + f.charAt(0).toUpperCase() + f.slice(1)).className =
+      'staging-filter text-xs px-3 py-1 rounded-full bg-zinc-900 text-white font-medium cursor-pointer';
+  }
+
+  // ── Step 3: Confirm ──────────────────────────────────────
+
+  function confirmImport() {
+    goStep(4);
+    // Hide step indicator on done screen
+    document.getElementById('stepIndicator').style.opacity = '0.4';
+  }
+
+  function resetImport() {
+    clearFile();
+    document.getElementById('stepIndicator').style.opacity = '';
+    goStep(1);
+    updateStepIndicator(1);
+  }
+</script>
+</body>
+</html>

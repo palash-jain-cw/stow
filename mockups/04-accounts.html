@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Accounts</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+    .group-body { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 250ms ease; }
+    .group-body.collapsed { grid-template-rows: 0fr; }
+    .group-body > div { overflow: hidden; }
+    .account-row { transition: background 120ms; cursor: pointer; }
+    .account-row.selected { background: #eff6ff; }
+    .account-row:hover:not(.selected) { background: #f4f4f5; }
+    .sheet { transform: translateX(100%); transition: transform 320ms cubic-bezier(0.32,0.72,0,1); }
+    .sheet.open { transform: translateX(0); }
+    .expandable { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms ease; }
+    .expandable.open { grid-template-rows: 1fr; }
+    .expandable > div { overflow: hidden; }
+    .tip { position: relative; display: inline-flex; cursor: help; }
+    .tip .tip-body {
+      display: none; position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+      background: #18181b; color: #fff; font-size: 11px; padding: 6px 10px; border-radius: 8px;
+      white-space: normal; width: 200px; z-index: 100; line-height: 1.5;
+    }
+    .tip:hover .tip-body { display: block; }
+    .inv-pill { transition: all 150ms; border: 1px solid #e4e4e7; }
+    .inv-pill.active { background: #18181b; color: #fff; border-color: #18181b; }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i><span class="tooltip">Dashboard</span>
+    </a>
+    <a href="02-transactions.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="list" class="w-4 h-4"></i><span class="tooltip">Transactions</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="layers" class="w-4 h-4"></i><span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="upload" class="w-4 h-4"></i><span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i><span class="tooltip">Reports</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i><span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="settings" class="w-4 h-4"></i><span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col overflow-hidden relative">
+
+    <!-- Header -->
+    <header class="h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+      <h1 class="text-base font-semibold">Accounts</h1>
+      <button onclick="openSheet()" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors cursor-pointer">
+        <i data-lucide="plus" class="w-4 h-4"></i> New Account
+      </button>
+    </header>
+
+    <!-- Two-panel body -->
+    <div class="flex-1 flex overflow-hidden">
+
+      <!-- Left: tree -->
+      <div class="w-72 shrink-0 bg-white border-r border-zinc-200 flex flex-col overflow-hidden">
+        <!-- Search -->
+        <div class="px-3 py-3 border-b border-zinc-100">
+          <div class="relative">
+            <i data-lucide="search" class="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+            <input type="text" placeholder="Search accounts…"
+              class="w-full pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition" />
+          </div>
+        </div>
+
+        <!-- Tree -->
+        <div class="flex-1 overflow-y-auto py-2">
+
+          <!-- Current Assets -->
+          <div>
+            <button onclick="toggleGroup('current-assets', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-current-assets"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Current Assets</span>
+            </button>
+            <div class="group-body" id="current-assets">
+              <div>
+                <div onclick="selectAccount('hdfc')" class="account-row selected flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                      <span class="text-xs font-bold text-blue-600">H</span>
+                    </div>
+                    <span class="text-sm text-zinc-800">HDFC Bank</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹3,42,180</span>
+                </div>
+                <div onclick="selectAccount('axis')" class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-5 h-5 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                      <span class="text-xs font-bold text-rose-600">A</span>
+                    </div>
+                    <span class="text-sm text-zinc-800">Axis Bank</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹1,28,540</span>
+                </div>
+                <div onclick="selectAccount('cash')" class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-5 h-5 rounded-full bg-zinc-100 flex items-center justify-center shrink-0">
+                      <i data-lucide="banknote" class="w-3 h-3 text-zinc-500"></i>
+                    </div>
+                    <span class="text-sm text-zinc-800">Cash in Hand</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹8,200</span>
+                </div>
+                <div onclick="selectAccount('union')" class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-5 h-5 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                      <span class="text-xs font-bold text-orange-600">U</span>
+                    </div>
+                    <span class="text-sm text-zinc-800">Union Bank</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹54,200</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fixed Assets -->
+          <div>
+            <button onclick="toggleGroup('fixed-assets', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-fixed-assets"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Fixed Assets</span>
+            </button>
+            <div class="group-body" id="fixed-assets">
+              <div>
+                <div onclick="selectAccount('macbook')" class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <i data-lucide="laptop" class="w-4 h-4 text-zinc-400 shrink-0"></i>
+                    <span class="text-sm text-zinc-800">MacBook Pro</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹1,20,000</span>
+                </div>
+                <div onclick="selectAccount('iphone')" class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <div class="flex items-center gap-2">
+                    <i data-lucide="smartphone" class="w-4 h-4 text-zinc-400 shrink-0"></i>
+                    <span class="text-sm text-zinc-800">iPhone 14</span>
+                  </div>
+                  <span class="font-mono text-xs text-zinc-500">₹62,000</span>
+                </div>
+                <div class="flex items-center justify-between pl-8 pr-3 py-2 opacity-50">
+                  <span class="text-xs text-zinc-500 italic">Accum. Dep. — MacBook</span>
+                  <span class="font-mono text-xs text-zinc-400">−₹28,000</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Investments -->
+          <div>
+            <button onclick="toggleGroup('investments', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-investments"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Investments</span>
+            </button>
+            <div class="group-body" id="investments">
+              <div>
+                <div class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <span class="text-sm text-zinc-800">Mirae Asset Large Cap</span>
+                  <span class="font-mono text-xs text-cyan-600">MF</span>
+                </div>
+                <div class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <span class="text-sm text-zinc-800">HDFC Top 100</span>
+                  <span class="font-mono text-xs text-cyan-600">MF</span>
+                </div>
+                <div class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <span class="text-sm text-zinc-800">HDFC FD — Jun 2025</span>
+                  <span class="font-mono text-xs text-cyan-600">FD</span>
+                </div>
+                <div class="account-row flex items-center justify-between pl-8 pr-3 py-2">
+                  <span class="text-sm text-zinc-800">PPF</span>
+                  <span class="font-mono text-xs text-cyan-600">PPF</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Collapsed groups -->
+          <div>
+            <button onclick="toggleGroup('capital', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-capital"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Capital Account</span>
+            </button>
+            <div class="group-body collapsed" id="capital"><div></div></div>
+          </div>
+          <div>
+            <button onclick="toggleGroup('liabilities', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-liabilities"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Current Liabilities</span>
+            </button>
+            <div class="group-body collapsed" id="liabilities"><div></div></div>
+          </div>
+          <div>
+            <button onclick="toggleGroup('income', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-income"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Income</span>
+            </button>
+            <div class="group-body collapsed" id="income"><div></div></div>
+          </div>
+          <div>
+            <button onclick="toggleGroup('expenses', this)" class="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 cursor-pointer transition-colors">
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" id="g-expenses"></i>
+              <span class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Expenses</span>
+            </button>
+            <div class="group-body collapsed" id="expenses"><div></div></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Right: detail panel -->
+      <div class="flex-1 overflow-y-auto">
+
+        <!-- Selected: HDFC Bank -->
+        <div id="detail-hdfc" class="p-8 max-w-lg">
+          <div class="flex items-start justify-between mb-6">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+                <span class="text-base font-bold text-blue-600">H</span>
+              </div>
+              <div>
+                <h2 class="text-lg font-semibold text-zinc-900">HDFC Bank</h2>
+                <span class="text-xs text-zinc-400">Bank Accounts · Current Assets</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stats -->
+          <div class="grid grid-cols-2 gap-3 mb-6">
+            <div class="bg-zinc-50 rounded-xl p-4">
+              <p class="text-xs text-zinc-400 mb-1">Current balance</p>
+              <p class="font-mono text-xl font-bold text-zinc-900">₹3,42,180</p>
+            </div>
+            <div class="bg-zinc-50 rounded-xl p-4">
+              <p class="text-xs text-zinc-400 mb-1">Transactions</p>
+              <p class="font-mono text-xl font-bold text-zinc-900">142</p>
+            </div>
+          </div>
+
+          <!-- Details -->
+          <div class="space-y-3 mb-6">
+            <div class="flex items-center justify-between py-2.5 border-b border-zinc-100">
+              <span class="text-sm text-zinc-500">Cash flow tag</span>
+              <span class="text-sm font-medium text-zinc-800">Operating</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 border-b border-zinc-100">
+              <span class="text-sm text-zinc-500">Opening balance</span>
+              <span class="font-mono text-sm font-medium text-zinc-800">₹2,18,000</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 border-b border-zinc-100">
+              <span class="text-sm text-zinc-500">FY opened</span>
+              <span class="text-sm font-medium text-zinc-800">1 Apr 2025</span>
+            </div>
+            <div class="flex items-center justify-between py-2.5 border-b border-zinc-100">
+              <span class="text-sm text-zinc-500">Last transaction</span>
+              <span class="text-sm font-medium text-zinc-800">14 May 2025</span>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex flex-col gap-2">
+            <button class="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium cursor-pointer transition-colors">
+              <i data-lucide="list" class="w-4 h-4"></i> View transactions
+            </button>
+            <button onclick="openSheet()" class="flex items-center gap-2 text-sm text-zinc-600 hover:text-zinc-800 cursor-pointer transition-colors">
+              <i data-lucide="pencil" class="w-4 h-4"></i> Edit account
+            </button>
+            <button class="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">
+              <i data-lucide="archive" class="w-4 h-4"></i> Archive account
+            </button>
+          </div>
+        </div>
+
+        <!-- Empty state -->
+        <div id="detail-empty" class="hidden flex flex-col items-center justify-center h-full text-center p-8">
+          <div class="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
+            <i data-lucide="layers" class="w-6 h-6 text-zinc-400"></i>
+          </div>
+          <h3 class="text-base font-semibold text-zinc-600 mb-1">Pick an account to see its story.</h3>
+          <p class="text-sm text-zinc-400 mb-5">Or start fresh with a new one.</p>
+          <button onclick="openSheet()" class="flex items-center gap-2 border border-zinc-200 hover:border-zinc-300 text-zinc-600 text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+            <i data-lucide="plus" class="w-4 h-4"></i> New Account
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Sheet overlay -->
+    <div id="overlay" onclick="closeSheet()" class="hidden absolute inset-0 bg-black/20 z-30"></div>
+
+    <!-- New Account Sheet -->
+    <div id="sheet" class="sheet absolute right-0 top-0 h-full w-[420px] bg-white border-l border-zinc-200 shadow-xl z-40 flex flex-col">
+      <div class="h-14 flex items-center justify-between px-5 border-b border-zinc-200 shrink-0">
+        <h2 class="text-sm font-semibold">New Account</h2>
+        <button onclick="closeSheet()" class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer transition-colors">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+
+        <!-- Name -->
+        <div>
+          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Name</label>
+          <input type="text" placeholder="e.g. HDFC Bank, Electricity Expense"
+            class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" />
+        </div>
+
+        <!-- Group -->
+        <div>
+          <div class="flex items-center gap-1.5 mb-2">
+            <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Group</label>
+            <span class="tip">
+              <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+              <span class="tip-body">Groups organise your accounts into categories like Bank Accounts, Expenses, Income etc. This determines how the account appears in reports.</span>
+            </span>
+          </div>
+          <select onchange="onGroupChange(this)" class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer">
+            <option value="">Select a group</option>
+            <optgroup label="Current Assets">
+              <option value="bank">Bank Accounts</option>
+              <option value="cash">Cash-in-Hand</option>
+            </optgroup>
+            <optgroup label="Fixed Assets">
+              <option value="fixed">Fixed Assets</option>
+            </optgroup>
+            <optgroup label="Investments">
+              <option value="investment">Investments</option>
+            </optgroup>
+            <optgroup label="Current Liabilities">
+              <option value="duties">Duties & Taxes</option>
+              <option value="cc">Credit Cards</option>
+            </optgroup>
+            <optgroup label="Income">
+              <option value="direct-income">Direct Income</option>
+              <option value="indirect-income">Indirect Income</option>
+            </optgroup>
+            <optgroup label="Expenses">
+              <option value="direct-exp">Direct Expenses</option>
+              <option value="indirect-exp">Indirect Expenses</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <!-- More details toggle -->
+        <button onclick="toggleMore()" id="more-btn" class="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 cursor-pointer transition-colors">
+          <i data-lucide="chevron-down" class="w-4 h-4 transition-transform duration-200" id="more-chevron"></i>
+          More details
+        </button>
+
+        <div class="expandable" id="more-panel">
+          <div>
+            <div class="space-y-5 pb-2">
+
+              <!-- Cash flow tag -->
+              <div>
+                <div class="flex items-center gap-1.5 mb-2">
+                  <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Cash flow tag</label>
+                  <span class="tip">
+                    <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                    <span class="tip-body">Used to classify cash movements in the Cash Flow Statement. Usually pre-filled correctly — only change if you know what you're doing.</span>
+                  </span>
+                </div>
+                <select class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer">
+                  <option>Operating</option>
+                  <option>Investing</option>
+                  <option>Financing</option>
+                </select>
+              </div>
+
+              <!-- Fixed asset: depreciation rate -->
+              <div id="dep-section" class="hidden">
+                <div class="flex items-center gap-1.5 mb-2">
+                  <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Depreciation rate</label>
+                  <span class="tip">
+                    <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                    <span class="tip-body">The WDV rate per Income Tax Act. Common rates: Computers 40%, Furniture 10%, Vehicles 15%, Plant & Machinery 15%.</span>
+                  </span>
+                </div>
+                <div class="flex gap-2">
+                  <div class="relative flex-1">
+                    <input type="number" placeholder="40" class="w-full px-3.5 pr-8 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" />
+                    <span class="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">%</span>
+                  </div>
+                  <select class="px-3 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                    <option>Computer (40%)</option>
+                    <option>Furniture (10%)</option>
+                    <option>Vehicle (15%)</option>
+                    <option>General (15%)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Investment: type -->
+              <div id="inv-section" class="hidden">
+                <div class="flex items-center gap-1.5 mb-2">
+                  <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Investment type</label>
+                  <span class="tip">
+                    <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                    <span class="tip-body">Equity MFs and Stocks track individual purchase lots for capital gains. FDs track interest income. PPF tracks contributions.</span>
+                  </span>
+                </div>
+                <div class="flex gap-2 flex-wrap">
+                  <button onclick="toggleInv(this)" class="inv-pill active text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer">Equity MF</button>
+                  <button onclick="toggleInv(this)" class="inv-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">Stock</button>
+                  <button onclick="toggleInv(this)" class="inv-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">FD</button>
+                  <button onclick="toggleInv(this)" class="inv-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">PPF</button>
+                </div>
+              </div>
+
+              <!-- Opening balance -->
+              <div>
+                <div class="flex items-center gap-1.5 mb-2">
+                  <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Opening balance</label>
+                  <span class="tip">
+                    <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                    <span class="tip-body">The balance this account had on 1 Apr 2025 when you started using Stow. Leave blank if it's a new account.</span>
+                  </span>
+                </div>
+                <div class="relative">
+                  <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-sm">₹</span>
+                  <input type="number" placeholder="0"
+                    class="w-full pl-8 pr-4 py-2.5 font-mono text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition" />
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="px-5 py-4 border-t border-zinc-100 shrink-0 flex items-center justify-between">
+        <button onclick="closeSheet()" class="text-sm text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">Cancel</button>
+        <div class="flex gap-2">
+          <button id="more-btn-footer" onclick="toggleMore()" class="text-sm text-zinc-500 border border-zinc-200 hover:border-zinc-300 px-3 py-2 rounded-lg cursor-pointer transition-colors">More details</button>
+          <button class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+            <i data-lucide="check" class="w-4 h-4"></i> Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  function toggleGroup(id, btn) {
+    const body = document.getElementById(id);
+    const icon = document.getElementById('g-' + id);
+    body.classList.toggle('collapsed');
+    icon.style.transform = body.classList.contains('collapsed') ? '' : 'rotate(90deg)';
+    // swap icon
+    lucide.createIcons();
+  }
+
+  function selectAccount(id) {
+    document.querySelectorAll('.account-row').forEach(r => r.classList.remove('selected'));
+    event.currentTarget.classList.add('selected');
+    document.getElementById('detail-hdfc').classList.toggle('hidden', id !== 'hdfc');
+    document.getElementById('detail-empty').classList.toggle('hidden', id === 'hdfc');
+    if (id !== 'hdfc') {
+      document.getElementById('detail-empty').querySelector('h3').textContent = 'This account has no detail view in this mockup.';
+    }
+  }
+
+  function openSheet() {
+    document.getElementById('sheet').classList.add('open');
+    document.getElementById('overlay').classList.remove('hidden');
+  }
+
+  function closeSheet() {
+    document.getElementById('sheet').classList.remove('open');
+    document.getElementById('overlay').classList.add('hidden');
+  }
+
+  let moreOpen = false;
+  function toggleMore() {
+    moreOpen = !moreOpen;
+    document.getElementById('more-panel').classList.toggle('open', moreOpen);
+    document.getElementById('more-chevron').style.transform = moreOpen ? 'rotate(180deg)' : '';
+    document.getElementById('more-btn-footer').textContent = moreOpen ? 'Less details' : 'More details';
+    lucide.createIcons();
+  }
+
+  function onGroupChange(sel) {
+    const val = sel.value;
+    document.getElementById('dep-section').classList.toggle('hidden', val !== 'fixed');
+    document.getElementById('inv-section').classList.toggle('hidden', val !== 'investment');
+    if (!moreOpen && (val === 'fixed' || val === 'investment')) toggleMore();
+  }
+
+  function toggleInv(btn) {
+    btn.closest('div').querySelectorAll('.inv-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Transactions</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+    .row-detail { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms ease; }
+    .row-detail.open { grid-template-rows: 1fr; }
+    .row-detail > div { overflow: hidden; }
+    .filter-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms ease; }
+    .filter-panel.open { grid-template-rows: 1fr; }
+    .filter-panel > div { overflow: hidden; }
+    .type-btn { transition: all 150ms; }
+    .type-btn.active { background: #18181b; color: #fff; }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+      <span class="tooltip">Dashboard</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="list" class="w-4 h-4"></i>
+      <span class="tooltip">Transactions</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layers" class="w-4 h-4"></i>
+      <span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="upload" class="w-4 h-4"></i>
+      <span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
+      <span class="tooltip">Reports</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i>
+      <span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="settings" class="w-4 h-4"></i>
+      <span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+
+    <!-- Header -->
+    <header class="h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+      <h1 class="text-base font-semibold">Transactions</h1>
+      <div class="relative" id="new-menu-wrap">
+        <button onclick="toggleNewMenu()" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors cursor-pointer">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          New Transaction
+          <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+        </button>
+        <div id="new-menu" class="hidden absolute right-0 mt-1 w-44 bg-white border border-zinc-200 rounded-xl shadow-lg py-1 z-50">
+          <button class="w-full text-left px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 cursor-pointer flex items-center gap-2">
+            <i data-lucide="pen-line" class="w-4 h-4 text-zinc-400"></i> Manual entry
+          </button>
+          <button class="w-full text-left px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 cursor-pointer flex items-center gap-2">
+            <i data-lucide="sparkles" class="w-4 h-4 text-blue-500"></i> Describe to AI
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Filter bar -->
+    <div class="bg-white border-b border-zinc-200 px-6 py-3 space-y-3">
+
+      <!-- Row 1: search + filters toggle -->
+      <div class="flex items-center gap-2">
+        <div class="relative flex-1">
+          <i data-lucide="search" class="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          <input
+            type="text"
+            placeholder="Search narration…"
+            class="w-full pl-9 pr-4 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+          />
+        </div>
+        <button onclick="toggleFilters()" id="filter-btn" class="flex items-center gap-1.5 text-sm text-zinc-600 border border-zinc-200 hover:border-zinc-300 px-3 py-2 rounded-lg cursor-pointer transition-colors">
+          <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
+          Filters
+          <i data-lucide="chevron-down" class="w-3.5 h-3.5 chevron" id="filter-chevron" style="transition: transform 250ms"></i>
+        </button>
+      </div>
+
+      <!-- Filter panel (collapsed by default) -->
+      <div class="filter-panel" id="filter-panel">
+        <div>
+          <div class="pt-1 pb-2 space-y-3">
+            <!-- Type -->
+            <div class="flex items-center gap-3">
+              <span class="text-xs font-medium text-zinc-500 w-12 shrink-0">Type</span>
+              <div class="flex gap-1.5">
+                <button onclick="toggleType(this,'ALL')" class="type-btn active text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer">All</button>
+                <button onclick="toggleType(this,'PAY')" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">PAY</button>
+                <button onclick="toggleType(this,'REC')" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">REC</button>
+                <button onclick="toggleType(this,'JNL')" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">JNL</button>
+                <button onclick="toggleType(this,'CTR')" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">CTR</button>
+              </div>
+            </div>
+            <!-- Date + Account + Tags -->
+            <div class="flex items-center gap-4 flex-wrap">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-medium text-zinc-500 w-12 shrink-0">Period</span>
+                <div class="flex gap-1 flex-wrap">
+                  <button onclick="togglePeriod(this)" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">Today</button>
+                  <button onclick="togglePeriod(this)" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">This week</button>
+                  <button onclick="togglePeriod(this)" class="type-btn active text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer">This month</button>
+                  <button onclick="togglePeriod(this)" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">Last month</button>
+                  <button onclick="togglePeriod(this)" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">This FY</button>
+                  <button onclick="togglePeriod(this)" class="type-btn text-xs px-2.5 py-1 rounded-md border border-zinc-200 cursor-pointer text-zinc-600">All time</button>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-zinc-500">Account</span>
+                <select class="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white">
+                  <option>All accounts</option>
+                  <option>HDFC Bank</option>
+                  <option>Axis Bank</option>
+                  <option>Union Bank</option>
+                </select>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium text-zinc-500">Tags</span>
+                <select class="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer bg-white">
+                  <option>All tags</option>
+                  <option>freelance</option>
+                  <option>tax-deductible</option>
+                </select>
+              </div>
+              <button class="text-xs text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors ml-auto">Clear all</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active filter chips -->
+      <div id="chips" class="hidden flex items-center gap-2 flex-wrap">
+        <span class="flex items-center gap-1 text-xs bg-zinc-100 text-zinc-700 px-2.5 py-1 rounded-full">
+          PAY <button onclick="removeChip(this)" class="ml-1 text-zinc-400 hover:text-zinc-700 cursor-pointer">×</button>
+        </span>
+        <span class="flex items-center gap-1 text-xs bg-zinc-100 text-zinc-700 px-2.5 py-1 rounded-full">
+          freelance <button onclick="removeChip(this)" class="ml-1 text-zinc-400 hover:text-zinc-700 cursor-pointer">×</button>
+        </span>
+        <button class="text-xs text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">Clear all</button>
+      </div>
+    </div>
+
+    <!-- Transaction list -->
+    <div class="flex-1 overflow-y-auto" id="list-view">
+      <div class="max-w-4xl mx-auto px-6 py-4 space-y-6">
+
+        <!-- Demo toggle -->
+        <div class="flex gap-2 text-xs text-zinc-400">
+          <span>Demo:</span>
+          <button onclick="showEmpty('none')" class="hover:text-zinc-600 cursor-pointer underline">With data</button>
+          <button onclick="showEmpty('fresh')" class="hover:text-zinc-600 cursor-pointer underline">Empty (fresh)</button>
+          <button onclick="showEmpty('filter')" class="hover:text-zinc-600 cursor-pointer underline">Empty (filtered)</button>
+        </div>
+
+        <!-- ── Data view ─────────────────────────────────────── -->
+        <div id="data-view">
+
+          <!-- Date group: 14 May -->
+          <div class="space-y-1">
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-xs font-semibold text-zinc-500">Thursday, 14 May</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-zinc-400">closing</span>
+                <span class="font-mono text-xs font-semibold text-zinc-700">₹5,24,920</span>
+              </div>
+            </div>
+
+            <!-- Row: Electricity (expanded) -->
+            <div class="bg-white rounded-xl border border-zinc-200 overflow-hidden shadow-sm">
+              <button onclick="toggleRow('r1')" class="w-full flex items-center justify-between px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left">
+                <div class="flex items-center gap-3 min-w-0">
+                  <i data-lucide="chevron-down" class="w-4 h-4 text-zinc-400 shrink-0 chevron rotated" id="chevron-r1" style="transition:transform 250ms"></i>
+                  <span class="text-sm text-zinc-800 truncate">Electricity bill — BESCOM</span>
+                </div>
+                <div class="flex items-center gap-3 shrink-0 ml-3">
+                  <span class="text-xs font-medium px-2 py-0.5 rounded bg-red-50 text-red-600">PAY</span>
+                  <span class="font-mono text-sm text-red-500 w-20 text-right">−₹2,400</span>
+                </div>
+              </button>
+              <div class="row-detail open" id="r1">
+                <div>
+                  <div class="px-4 pb-4 pt-1 border-t border-zinc-100 space-y-3">
+                    <!-- Entries table -->
+                    <div>
+                      <p class="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">Entries</p>
+                      <div class="rounded-lg border border-zinc-100 overflow-hidden">
+                        <table class="w-full text-sm">
+                          <thead class="bg-zinc-50">
+                            <tr>
+                              <th class="text-left px-3 py-2 text-xs font-medium text-zinc-400">Account</th>
+                              <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400">Dr</th>
+                              <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400">Cr</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-zinc-50">
+                            <tr>
+                              <td class="px-3 py-2 text-zinc-700">Electricity Expense</td>
+                              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹2,400</td>
+                              <td class="px-3 py-2 text-right font-mono text-zinc-300">—</td>
+                            </tr>
+                            <tr>
+                              <td class="px-3 py-2 text-zinc-700">HDFC Bank</td>
+                              <td class="px-3 py-2 text-right font-mono text-zinc-300">—</td>
+                              <td class="px-3 py-2 text-right font-mono text-zinc-900">₹2,400</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <!-- Meta row -->
+                    <div class="flex items-center gap-4 flex-wrap">
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-xs text-zinc-400">Tags</span>
+                        <span class="text-xs text-zinc-300">none</span>
+                        <button class="text-xs text-blue-500 hover:text-blue-700 cursor-pointer">+ add</button>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-xs text-zinc-400">Attach</span>
+                        <span class="text-xs text-zinc-300">none</span>
+                        <button class="text-xs text-blue-500 hover:text-blue-700 cursor-pointer">+ add</button>
+                      </div>
+                    </div>
+                    <!-- Footer row -->
+                    <div class="flex items-center justify-between pt-1">
+                      <span class="font-mono text-xs text-zinc-300">PAY-2025-014</span>
+                      <div class="flex items-center gap-3">
+                        <button class="text-xs text-zinc-400 hover:text-zinc-600 cursor-pointer flex items-center gap-1">
+                          <i data-lucide="history" class="w-3.5 h-3.5"></i> Audit log
+                        </button>
+                        <button class="text-xs text-blue-600 hover:text-blue-700 cursor-pointer font-medium">Edit</button>
+                        <button class="text-xs text-red-500 hover:text-red-700 cursor-pointer font-medium">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Date group: 13 May -->
+          <div class="space-y-1">
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-xs font-semibold text-zinc-500">Wednesday, 13 May</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-zinc-400">closing</span>
+                <span class="font-mono text-xs font-semibold text-zinc-700">₹5,27,320</span>
+              </div>
+            </div>
+            <div class="bg-white rounded-xl border border-zinc-200 overflow-hidden shadow-sm">
+              <button onclick="toggleRow('r2')" class="w-full flex items-center justify-between px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left">
+                <div class="flex items-center gap-3 min-w-0">
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-zinc-400 shrink-0" id="chevron-r2" style="transition:transform 250ms"></i>
+                  <span class="text-sm text-zinc-800 truncate">Freelance design project — Client A</span>
+                </div>
+                <div class="flex items-center gap-3 shrink-0 ml-3">
+                  <span class="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-600">REC</span>
+                  <span class="font-mono text-sm text-emerald-600 w-20 text-right">+₹22,500</span>
+                </div>
+              </button>
+              <div class="row-detail" id="r2">
+                <div>
+                  <div class="px-4 pb-4 pt-1 border-t border-zinc-100 space-y-3">
+                    <div class="rounded-lg border border-zinc-100 overflow-hidden">
+                      <table class="w-full text-sm">
+                        <thead class="bg-zinc-50"><tr>
+                          <th class="text-left px-3 py-2 text-xs font-medium text-zinc-400">Account</th>
+                          <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400">Dr</th>
+                          <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400">Cr</th>
+                        </tr></thead>
+                        <tbody class="divide-y divide-zinc-50">
+                          <tr><td class="px-3 py-2 text-zinc-700">HDFC Bank</td><td class="px-3 py-2 text-right font-mono text-zinc-900">₹22,500</td><td class="px-3 py-2 text-right font-mono text-zinc-300">—</td></tr>
+                          <tr><td class="px-3 py-2 text-zinc-700">Freelance Income</td><td class="px-3 py-2 text-right font-mono text-zinc-300">—</td><td class="px-3 py-2 text-right font-mono text-zinc-900">₹22,500</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div class="flex items-center gap-4 flex-wrap">
+                      <div class="flex items-center gap-1.5"><span class="text-xs text-zinc-400">Tags</span><span class="inline-flex items-center gap-1 text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full">freelance <span class="cursor-pointer text-zinc-400 hover:text-zinc-700">×</span></span><button class="text-xs text-blue-500 hover:text-blue-700 cursor-pointer">+ add</button></div>
+                      <div class="flex items-center gap-1.5"><span class="text-xs text-zinc-400">Attach</span><span class="text-xs text-zinc-300">none</span><button class="text-xs text-blue-500 hover:text-blue-700 cursor-pointer">+ add</button></div>
+                    </div>
+                    <div class="flex items-center justify-between pt-1">
+                      <span class="font-mono text-xs text-zinc-300">REC-2025-013</span>
+                      <div class="flex items-center gap-3">
+                        <button class="text-xs text-zinc-400 hover:text-zinc-600 cursor-pointer flex items-center gap-1"><i data-lucide="history" class="w-3.5 h-3.5"></i> Audit log</button>
+                        <button class="text-xs text-blue-600 hover:text-blue-700 cursor-pointer font-medium">Edit</button>
+                        <button class="text-xs text-red-500 hover:text-red-700 cursor-pointer font-medium">Delete</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Date group: 12 May -->
+          <div class="space-y-1">
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-xs font-semibold text-zinc-500">Monday, 12 May</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-zinc-400">closing</span>
+                <span class="font-mono text-xs font-semibold text-zinc-700">₹5,04,820</span>
+              </div>
+            </div>
+            <div class="bg-white rounded-xl border border-zinc-200 shadow-sm">
+              <button onclick="toggleRow('r3')" class="w-full flex items-center justify-between px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left">
+                <div class="flex items-center gap-3 min-w-0">
+                  <i data-lucide="chevron-right" class="w-4 h-4 text-zinc-400 shrink-0" id="chevron-r3" style="transition:transform 250ms"></i>
+                  <span class="text-sm text-zinc-800 truncate">Transfer to Axis savings</span>
+                </div>
+                <div class="flex items-center gap-3 shrink-0 ml-3">
+                  <span class="text-xs font-medium px-2 py-0.5 rounded bg-zinc-100 text-zinc-600">CTR</span>
+                  <span class="font-mono text-sm text-zinc-600 w-20 text-right">₹20,000</span>
+                </div>
+              </button>
+              <div class="row-detail" id="r3"><div></div></div>
+            </div>
+          </div>
+
+          <!-- Date group: 10 May -->
+          <div class="space-y-1">
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-xs font-semibold text-zinc-500">Saturday, 10 May</span>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-zinc-400">closing</span>
+                <span class="font-mono text-xs font-semibold text-zinc-700">₹5,24,820</span>
+              </div>
+            </div>
+            <div class="space-y-1">
+              <div class="bg-white rounded-xl border border-zinc-200 shadow-sm">
+                <button onclick="toggleRow('r4')" class="w-full flex items-center justify-between px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <i data-lucide="chevron-right" class="w-4 h-4 text-zinc-400 shrink-0" id="chevron-r4" style="transition:transform 250ms"></i>
+                    <span class="text-sm text-zinc-800 truncate">April salary</span>
+                  </div>
+                  <div class="flex items-center gap-3 shrink-0 ml-3">
+                    <span class="text-xs font-medium px-2 py-0.5 rounded bg-emerald-50 text-emerald-600">REC</span>
+                    <span class="font-mono text-sm text-emerald-600 w-20 text-right">+₹85,000</span>
+                  </div>
+                </button>
+                <div class="row-detail" id="r4"><div></div></div>
+              </div>
+              <div class="bg-white rounded-xl border border-zinc-200 shadow-sm">
+                <button onclick="toggleRow('r5')" class="w-full flex items-center justify-between px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <i data-lucide="chevron-right" class="w-4 h-4 text-zinc-400 shrink-0" id="chevron-r5" style="transition:transform 250ms"></i>
+                    <span class="text-sm text-zinc-800 truncate">Depreciation — MacBook Pro</span>
+                  </div>
+                  <div class="flex items-center gap-3 shrink-0 ml-3">
+                    <span class="text-xs font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-600">JNL</span>
+                    <span class="font-mono text-sm text-zinc-600 w-20 text-right">₹8,333</span>
+                  </div>
+                </button>
+                <div class="row-detail" id="r5"><div></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pagination -->
+          <div class="flex items-center justify-between pt-2 pb-4">
+            <span class="text-xs text-zinc-400">1–10 of 142 transactions</span>
+            <div class="flex items-center gap-2">
+              <select class="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none cursor-pointer">
+                <option>10 per page</option>
+                <option>25 per page</option>
+                <option>50 per page</option>
+              </select>
+              <button class="w-7 h-7 flex items-center justify-center border border-zinc-200 rounded-lg text-zinc-400 hover:text-zinc-700 hover:border-zinc-300 cursor-pointer transition-colors">
+                <i data-lucide="chevron-left" class="w-4 h-4"></i>
+              </button>
+              <button class="w-7 h-7 flex items-center justify-center border border-zinc-200 rounded-lg text-zinc-400 hover:text-zinc-700 hover:border-zinc-300 cursor-pointer transition-colors">
+                <i data-lucide="chevron-right" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ── Empty: fresh books ───────────────────────────── -->
+        <div id="empty-fresh" class="hidden flex flex-col items-center justify-center py-24 text-center">
+          <div class="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
+            <i data-lucide="inbox" class="w-6 h-6 text-zinc-400"></i>
+          </div>
+          <h3 class="text-base font-semibold text-zinc-700 mb-1">Your ledger is patiently waiting.</h3>
+          <p class="text-sm text-zinc-400 mb-5">Add your first transaction to get started.</p>
+          <button class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            Record something
+          </button>
+        </div>
+
+        <!-- ── Empty: no filter results ─────────────────────── -->
+        <div id="empty-filter" class="hidden flex flex-col items-center justify-center py-24 text-center">
+          <div class="w-12 h-12 rounded-2xl bg-zinc-100 flex items-center justify-center mb-4">
+            <i data-lucide="file-search" class="w-6 h-6 text-zinc-400"></i>
+          </div>
+          <h3 class="text-base font-semibold text-zinc-700 mb-1">Nothing matches those filters.</h3>
+          <p class="text-sm text-zinc-400 mb-5">Try broadening your search or clearing a filter.</p>
+          <button class="flex items-center gap-2 border border-zinc-200 hover:border-zinc-300 text-zinc-600 text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+            <i data-lucide="x" class="w-4 h-4"></i>
+            Clear filters
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  let openRow = 'r1';
+
+  function toggleRow(id) {
+    if (openRow && openRow !== id) {
+      const prev = document.getElementById(openRow);
+      const prevChev = document.getElementById('chevron-' + openRow);
+      if (prev) { prev.classList.remove('open'); }
+      if (prevChev) { prevChev.style.transform = ''; prevChev.setAttribute('data-lucide', 'chevron-right'); }
+    }
+    const el = document.getElementById(id);
+    const chev = document.getElementById('chevron-' + id);
+    const isOpen = el.classList.contains('open');
+    el.classList.toggle('open');
+    if (chev) {
+      chev.style.transform = isOpen ? '' : 'rotate(90deg)';
+    }
+    openRow = isOpen ? null : id;
+    lucide.createIcons();
+  }
+
+  function toggleFilters() {
+    const panel = document.getElementById('filter-panel');
+    const chevron = document.getElementById('filter-chevron');
+    panel.classList.toggle('open');
+    chevron.style.transform = panel.classList.contains('open') ? 'rotate(180deg)' : '';
+  }
+
+  function toggleType(btn, type) {
+    btn.closest('div').querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  function togglePeriod(btn) {
+    btn.closest('div').querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  function toggleNewMenu() {
+    document.getElementById('new-menu').classList.toggle('hidden');
+  }
+
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('new-menu-wrap');
+    if (!wrap.contains(e.target)) document.getElementById('new-menu').classList.add('hidden');
+  });
+
+  function removeChip(btn) {
+    btn.closest('span').remove();
+  }
+
+  function showEmpty(state) {
+    document.getElementById('data-view').classList.toggle('hidden', state !== 'none');
+    document.getElementById('empty-fresh').classList.toggle('hidden', state !== 'fresh');
+    document.getElementById('empty-filter').classList.toggle('hidden', state !== 'filter');
+  }
+</script>
+</body>
+</html>

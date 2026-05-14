@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stow — Transaction Entry</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['IBM Plex Sans', 'sans-serif'], mono: ['IBM Plex Mono', 'monospace'] } } }
+    }
+  </script>
+  <style>
+    body { font-family: 'IBM Plex Sans', sans-serif; background: #fafafa; }
+    .font-mono { font-family: 'IBM Plex Mono', monospace; }
+    .nav-btn { position: relative; }
+    .nav-btn .tooltip {
+      position: absolute; left: 56px; top: 50%; transform: translateY(-50%);
+      background: #18181b; color: #fff; font-size: 12px; white-space: nowrap;
+      padding: 4px 8px; border-radius: 6px; pointer-events: none;
+      opacity: 0; transition: opacity 150ms; z-index: 50;
+    }
+    .nav-btn:hover .tooltip { opacity: 1; }
+
+    /* Sheet */
+    .sheet {
+      transform: translateX(100%);
+      transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .sheet.open { transform: translateX(0); }
+
+    /* Expand sections */
+    .expandable { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms ease; }
+    .expandable.open { grid-template-rows: 1fr; }
+    .expandable > div { overflow: hidden; }
+
+    /* Type buttons */
+    .type-pill { transition: all 150ms; border: 1px solid #e4e4e7; }
+    .type-pill.active { background: #18181b; color: #fff; border-color: #18181b; }
+
+    /* Repeat pills */
+    .repeat-pill { transition: all 150ms; border: 1px solid #e4e4e7; }
+    .repeat-pill.active { background: #18181b; color: #fff; border-color: #18181b; }
+
+    /* Balance indicator */
+    .balance-ok { color: #059669; }
+    .balance-err { color: #dc2626; }
+
+    /* Tooltip */
+    .tip { position: relative; display: inline-flex; cursor: help; }
+    .tip .tip-body {
+      display: none; position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #18181b; color: #fff; font-size: 11px; padding: 6px 10px; border-radius: 8px;
+      white-space: nowrap; max-width: 220px; white-space: normal; width: 200px; z-index: 100;
+      line-height: 1.5;
+    }
+    .tip:hover .tip-body { display: block; }
+  </style>
+</head>
+<body class="text-zinc-900">
+<div class="flex h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="w-14 shrink-0 bg-white border-r border-zinc-200 flex flex-col items-center py-4 gap-1">
+    <div class="w-8 h-8 rounded-lg bg-zinc-900 flex items-center justify-center mb-3">
+      <span class="text-white text-xs font-bold">S</span>
+    </div>
+    <a href="01-dashboard.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layout-dashboard" class="w-4 h-4"></i><span class="tooltip">Dashboard</span>
+    </a>
+    <a href="02-transactions.html" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg bg-zinc-100 text-zinc-900 cursor-pointer">
+      <i data-lucide="list" class="w-4 h-4"></i><span class="tooltip">Transactions</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="layers" class="w-4 h-4"></i><span class="tooltip">Accounts</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="upload" class="w-4 h-4"></i><span class="tooltip">Bank Import</span>
+    </a>
+    <div class="w-6 border-t border-zinc-100 my-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="bar-chart-2" class="w-4 h-4"></i><span class="tooltip">Reports</span>
+    </a>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="briefcase" class="w-4 h-4"></i><span class="tooltip">Portfolio</span>
+    </a>
+    <div class="flex-1"></div>
+    <a href="#" class="nav-btn w-9 h-9 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700 cursor-pointer transition-colors">
+      <i data-lucide="settings" class="w-4 h-4"></i><span class="tooltip">Settings</span>
+    </a>
+  </aside>
+
+  <!-- Page behind sheet (transactions list, dimmed) -->
+  <div class="flex-1 flex flex-col overflow-hidden relative">
+
+    <!-- Transactions page (background) -->
+    <div class="flex flex-col h-full" id="bg-page">
+      <header class="h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+        <h1 class="text-base font-semibold">Transactions</h1>
+        <button onclick="openSheet('pay')" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors cursor-pointer">
+          <i data-lucide="plus" class="w-4 h-4"></i> New Transaction
+        </button>
+      </header>
+      <div class="flex-1 flex items-center justify-center text-zinc-300 text-sm select-none">
+        ← Transactions list behind the sheet
+      </div>
+    </div>
+
+    <!-- Overlay -->
+    <div id="overlay" onclick="closeSheet()" class="hidden absolute inset-0 bg-black/20 z-30 transition-opacity"></div>
+
+    <!-- Sheet -->
+    <div id="sheet" class="sheet absolute right-0 top-0 h-full w-[440px] bg-white border-l border-zinc-200 shadow-xl z-40 flex flex-col">
+
+      <!-- Sheet header -->
+      <div class="h-14 flex items-center justify-between px-5 border-b border-zinc-200 shrink-0">
+        <h2 class="text-sm font-semibold text-zinc-900" id="sheet-title">New Transaction</h2>
+        <button onclick="closeSheet()" class="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 cursor-pointer transition-colors">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Sheet body (scrollable) -->
+      <div class="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+
+        <!-- Type selector -->
+        <div>
+          <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Type</label>
+          <div class="flex gap-2">
+            <button onclick="setType('pay',this)" class="type-pill active text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer">Payment</button>
+            <button onclick="setType('rec',this)" class="type-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">Receipt</button>
+            <button onclick="setType('jnl',this)" class="type-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">Journal</button>
+            <button onclick="setType('ctr',this)" class="type-pill text-xs font-medium px-3 py-1.5 rounded-lg cursor-pointer text-zinc-600">Contra</button>
+          </div>
+        </div>
+
+        <!-- PAY / REC / CTR fields -->
+        <div id="simple-fields">
+          <!-- Amount -->
+          <div class="space-y-5">
+            <div>
+              <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Amount</label>
+              <div class="relative">
+                <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 font-mono text-sm">₹</span>
+                <input type="number" placeholder="0" id="amount-input"
+                  class="w-full pl-8 pr-4 py-2.5 font-mono text-lg border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+              </div>
+            </div>
+
+            <!-- Narration -->
+            <div>
+              <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Narration</label>
+              <input type="text" placeholder="What was this for?"
+                class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+            </div>
+
+            <!-- Date -->
+            <div>
+              <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Date</label>
+              <input type="date" value="2025-05-14"
+                class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition cursor-pointer" />
+            </div>
+          </div>
+
+          <!-- More details toggle -->
+          <div class="pt-2">
+            <button onclick="toggleMore()" id="more-btn" class="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 cursor-pointer transition-colors">
+              <i data-lucide="chevron-down" class="w-4 h-4 transition-transform duration-200" id="more-chevron"></i>
+              More details
+            </button>
+          </div>
+
+          <!-- More details panel -->
+          <div class="expandable mt-3" id="more-panel">
+            <div>
+              <div class="space-y-4 pb-2">
+
+                <!-- From account -->
+                <div>
+                  <div class="flex items-center gap-1.5 mb-2">
+                    <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide" id="from-label">From account</label>
+                    <span class="tip">
+                      <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                      <span class="tip-body">The account money is leaving — usually your bank or cash account.</span>
+                    </span>
+                  </div>
+                  <select class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer">
+                    <option value="">Select account</option>
+                    <option selected>HDFC Bank</option>
+                    <option>Axis Bank</option>
+                    <option>Cash in Hand</option>
+                    <option>Union Bank</option>
+                  </select>
+                </div>
+
+                <!-- To account -->
+                <div>
+                  <div class="flex items-center gap-1.5 mb-2">
+                    <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide" id="to-label">To account</label>
+                    <span class="tip">
+                      <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                      <span class="tip-body">The account that receives the money — usually an expense or income account.</span>
+                    </span>
+                  </div>
+                  <select class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer">
+                    <option value="">Select account</option>
+                    <option>Electricity Expense</option>
+                    <option>Internet Expense</option>
+                    <option>Freelance Income</option>
+                    <option>Salary Income</option>
+                  </select>
+                </div>
+
+                <!-- Tags -->
+                <div>
+                  <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Tags</label>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="flex items-center gap-1 text-xs bg-zinc-100 text-zinc-700 px-2.5 py-1 rounded-full">
+                      freelance <button class="ml-0.5 text-zinc-400 hover:text-zinc-700 cursor-pointer">×</button>
+                    </span>
+                    <button class="text-xs text-blue-500 hover:text-blue-700 cursor-pointer">+ add tag</button>
+                  </div>
+                </div>
+
+                <!-- Attachment -->
+                <div>
+                  <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Attachment</label>
+                  <button class="flex items-center gap-2 text-sm text-zinc-400 border border-dashed border-zinc-200 hover:border-zinc-300 hover:text-zinc-600 rounded-xl px-4 py-3 w-full cursor-pointer transition-colors">
+                    <i data-lucide="paperclip" class="w-4 h-4"></i>
+                    Attach receipt or bill
+                  </button>
+                </div>
+
+                <!-- Repeats -->
+                <div>
+                  <div class="flex items-center gap-1.5 mb-2">
+                    <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Repeats</label>
+                    <span class="tip">
+                      <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                      <span class="tip-body">Set up a recurring transaction. You'll get a reminder on the due date — confirm, edit, or let it auto-post by end of day.</span>
+                    </span>
+                  </div>
+                  <div class="flex gap-2 flex-wrap">
+                    <button onclick="setRepeat(this,'none')" class="repeat-pill active text-xs px-2.5 py-1.5 rounded-lg cursor-pointer">Does not repeat</button>
+                    <button onclick="setRepeat(this,'daily')" class="repeat-pill text-xs px-2.5 py-1.5 rounded-lg cursor-pointer text-zinc-600">Daily</button>
+                    <button onclick="setRepeat(this,'weekly')" class="repeat-pill text-xs px-2.5 py-1.5 rounded-lg cursor-pointer text-zinc-600">Weekly</button>
+                    <button onclick="setRepeat(this,'monthly')" class="repeat-pill text-xs px-2.5 py-1.5 rounded-lg cursor-pointer text-zinc-600">Monthly</button>
+                    <button onclick="setRepeat(this,'yearly')" class="repeat-pill text-xs px-2.5 py-1.5 rounded-lg cursor-pointer text-zinc-600">Yearly</button>
+                  </div>
+
+                  <!-- Repeat options (shown when repeat is set) -->
+                  <div class="expandable mt-3" id="repeat-options">
+                    <div>
+                      <div class="space-y-3 pt-1">
+                        <div class="flex items-center gap-3">
+                          <label class="text-xs text-zinc-500 w-16 shrink-0">On day</label>
+                          <select class="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer">
+                            <option>1st of month</option>
+                            <option>5th of month</option>
+                            <option>Last day</option>
+                          </select>
+                        </div>
+                        <div class="flex items-center gap-3">
+                          <label class="text-xs text-zinc-500 w-16 shrink-0">Until</label>
+                          <select class="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" id="until-select" onchange="toggleUntilDate(this)">
+                            <option>No end date</option>
+                            <option>Specific date</option>
+                          </select>
+                          <input type="date" id="until-date" class="hidden text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" />
+                        </div>
+                        <p class="text-xs text-zinc-400 bg-zinc-50 rounded-lg px-3 py-2">
+                          On the due date, this will appear in your dashboard for review. If you don't act, it auto-posts by end of day.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- JOURNAL fields (hidden by default) -->
+        <div id="journal-fields" class="hidden space-y-4">
+          <!-- Narration -->
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Narration</label>
+            <input type="text" placeholder="What is this journal entry for?"
+              class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" />
+          </div>
+          <!-- Date -->
+          <div>
+            <label class="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Date</label>
+            <input type="date" value="2025-05-14"
+              class="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" />
+          </div>
+
+          <!-- Entries table -->
+          <div>
+            <div class="flex items-center gap-1.5 mb-2">
+              <label class="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Entries</label>
+              <span class="tip">
+                <i data-lucide="help-circle" class="w-3.5 h-3.5 text-zinc-300"></i>
+                <span class="tip-body">Every journal entry must have equal debits and credits. Dr increases assets/expenses; Cr increases liabilities/income.</span>
+              </span>
+            </div>
+            <div class="rounded-xl border border-zinc-200 overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-zinc-50 border-b border-zinc-200">
+                  <tr>
+                    <th class="text-left px-3 py-2 text-xs font-medium text-zinc-400 w-1/2">Account</th>
+                    <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400 w-1/4">Dr</th>
+                    <th class="text-right px-3 py-2 text-xs font-medium text-zinc-400 w-1/4">Cr</th>
+                  </tr>
+                </thead>
+                <tbody id="entries-body" class="divide-y divide-zinc-100">
+                  <tr>
+                    <td class="px-2 py-2">
+                      <select class="w-full text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                        <option value="">Select account</option>
+                        <option>Electricity Expense</option>
+                        <option>Depreciation Expense</option>
+                        <option>HDFC Bank</option>
+                        <option>Accumulated Depreciation — MacBook</option>
+                      </select>
+                    </td>
+                    <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                  </tr>
+                  <tr>
+                    <td class="px-2 py-2">
+                      <select class="w-full text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                        <option value="">Select account</option>
+                        <option>Electricity Expense</option>
+                        <option>Depreciation Expense</option>
+                        <option>HDFC Bank</option>
+                        <option selected>Accumulated Depreciation — MacBook</option>
+                      </select>
+                    </td>
+                    <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                    <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button onclick="addEntry()" class="mt-2 flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-700 cursor-pointer transition-colors">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add entry
+            </button>
+
+            <!-- Balance indicator -->
+            <div id="balance-ok" class="hidden mt-3 flex items-center gap-2 text-sm font-medium text-emerald-600">
+              <i data-lucide="check-circle" class="w-4 h-4"></i> Perfectly balanced, as all things should be.
+            </div>
+            <div id="balance-err" class="mt-3 flex items-center gap-2 text-sm font-medium text-red-500">
+              <i data-lucide="alert-circle" class="w-4 h-4"></i> Something doesn't add up — literally. ₹400 short.
+            </div>
+            <button onclick="toggleBalance()" class="mt-1 text-xs text-zinc-300 cursor-pointer hover:text-zinc-400">toggle balance demo</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Sheet footer -->
+      <div class="px-5 py-4 border-t border-zinc-100 shrink-0">
+        <div class="flex items-center justify-between">
+          <button onclick="closeSheet()" class="text-sm text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">Cancel</button>
+          <div class="flex items-center gap-2">
+            <button id="more-save-btn" onclick="toggleMore()" class="text-sm text-zinc-500 border border-zinc-200 hover:border-zinc-300 px-3 py-2 rounded-lg cursor-pointer transition-colors">
+              More details
+            </button>
+            <button class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+              <i data-lucide="check" class="w-4 h-4"></i> Save
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  // Auto-open sheet on load
+  window.addEventListener('load', () => setTimeout(() => openSheet('pay'), 200));
+
+  function openSheet() {
+    document.getElementById('sheet').classList.add('open');
+    document.getElementById('overlay').classList.remove('hidden');
+  }
+
+  function closeSheet() {
+    document.getElementById('sheet').classList.remove('open');
+    document.getElementById('overlay').classList.add('hidden');
+  }
+
+  let moreOpen = false;
+  function toggleMore() {
+    moreOpen = !moreOpen;
+    const panel = document.getElementById('more-panel');
+    const chevron = document.getElementById('more-chevron');
+    const btn = document.getElementById('more-save-btn');
+    panel.classList.toggle('open', moreOpen);
+    chevron.style.transform = moreOpen ? 'rotate(180deg)' : '';
+    btn.textContent = moreOpen ? 'Less details' : 'More details';
+    lucide.createIcons();
+  }
+
+  let currentType = 'pay';
+  function setType(type, btn) {
+    currentType = type;
+    document.querySelectorAll('.type-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const simple = document.getElementById('simple-fields');
+    const journal = document.getElementById('journal-fields');
+    const fromLabel = document.getElementById('from-label');
+    const toLabel = document.getElementById('to-label');
+
+    if (type === 'jnl') {
+      simple.classList.add('hidden');
+      journal.classList.remove('hidden');
+    } else {
+      simple.classList.remove('hidden');
+      journal.classList.add('hidden');
+      if (type === 'pay') { fromLabel.textContent = 'From account'; toLabel.textContent = 'To account'; }
+      if (type === 'rec') { fromLabel.textContent = 'To account'; toLabel.textContent = 'From account'; }
+      if (type === 'ctr') { fromLabel.textContent = 'From account'; toLabel.textContent = 'To account'; }
+    }
+    lucide.createIcons();
+  }
+
+  function setRepeat(btn, val) {
+    document.querySelectorAll('.repeat-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const opts = document.getElementById('repeat-options');
+    opts.classList.toggle('open', val !== 'none');
+  }
+
+  function toggleUntilDate(sel) {
+    document.getElementById('until-date').classList.toggle('hidden', sel.value !== 'Specific date');
+  }
+
+  function addEntry() {
+    const tbody = document.getElementById('entries-body');
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="px-2 py-2">
+        <select class="w-full text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+          <option value="">Select account</option>
+          <option>Electricity Expense</option><option>HDFC Bank</option>
+        </select>
+      </td>
+      <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+      <td class="px-2 py-2"><input type="number" placeholder="—" class="w-full text-right text-xs font-mono border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" /></td>
+    `;
+    tbody.appendChild(row);
+    lucide.createIcons();
+  }
+
+  let balanced = false;
+  function toggleBalance() {
+    balanced = !balanced;
+    document.getElementById('balance-ok').classList.toggle('hidden', !balanced);
+    document.getElementById('balance-err').classList.toggle('hidden', balanced);
+    lucide.createIcons();
+  }
+</script>
+</body>
+</html>
