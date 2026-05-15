@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, Plus, Bell, Clock, Sparkles, Repeat, Receipt } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
 import { TxnBadge, type TxnType } from '../components/TxnBadge'
-import { Sheet } from '../components/Sheet'
 import { EmptyState } from '../components/EmptyState'
+import { TransactionEntrySheet, type TransactionDraft } from '../components/TransactionEntrySheet'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -454,49 +454,11 @@ function RecentZone({
   )
 }
 
-// ── Parsed transaction review (stub for #15) ───────────────────────────────
-
-function ParsedTxnReview({
-  txn,
-  onClose,
-}: {
-  txn: ParsedTxn
-  onClose: () => void
-}) {
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-zinc-400 uppercase tracking-wide font-semibold">AI understood this as</p>
-      <div className="space-y-2 text-sm">
-        {[
-          ['Type', txn.type],
-          ['Date', txn.date],
-          ['Amount', txn.amount != null ? `₹${(txn.amount / 100).toLocaleString('en-IN')}` : '—'],
-          ['Narration', txn.narration],
-          ['From', txn.from_account ?? '—'],
-          ['To', txn.to_account ?? '—'],
-        ].map(([k, v]) => (
-          <div key={k} className="flex justify-between">
-            <span className="text-zinc-500">{k}</span>
-            <span className="text-zinc-900 font-medium">{v}</span>
-          </div>
-        ))}
-      </div>
-      <p className="text-xs text-zinc-400 pt-2">
-        Full entry form coming in the next release. For now, post manually from Transactions.
-      </p>
-      <button
-        onClick={onClose}
-        className="w-full mt-2 py-2 rounded-xl border border-zinc-200 text-sm text-zinc-600 hover:bg-zinc-50 transition-colors"
-      >
-        Close
-      </button>
-    </div>
-  )
-}
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const qc = useQueryClient()
   const [openZone, setOpenZone] = useState<'entry' | 'attention' | 'recent' | null>(null)
   const [nlText, setNlText] = useState('')
   const [parsedTxn, setParsedTxn] = useState<ParsedTxn | null>(null)
@@ -614,18 +576,22 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Parsed transaction review sheet */}
-      <Sheet
+      {/* Transaction entry sheet */}
+      <TransactionEntrySheet
         open={sheetOpen}
         onClose={() => { setSheetOpen(false); setParsedTxn(null) }}
-        title={parsedTxn ? 'Review transaction' : 'New transaction'}
-      >
-        {parsedTxn ? (
-          <ParsedTxnReview txn={parsedTxn} onClose={() => { setSheetOpen(false); setParsedTxn(null) }} />
-        ) : (
-          <p className="text-sm text-zinc-400">Full entry form coming in #15.</p>
-        )}
-      </Sheet>
+        prefill={parsedTxn ? ({
+          type: parsedTxn.type as TransactionDraft['type'],
+          narration: parsedTxn.narration,
+          date: parsedTxn.date,
+          amountRupees: parsedTxn.amount > 0 ? String(parsedTxn.amount / 100) : '',
+        } satisfies Partial<TransactionDraft>) : undefined}
+        onSaved={() => {
+          qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
+          qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+          setParsedTxn(null)
+        }}
+      />
     </div>
   )
 }

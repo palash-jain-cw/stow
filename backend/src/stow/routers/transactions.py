@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from stow.db import get_session
-from stow.models import Entry, FinancialYear, Transaction, TransactionAuditLog
+from stow.models import Account, Entry, FinancialYear, Transaction, TransactionAuditLog
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -36,6 +36,7 @@ class TransactionIn(BaseModel):
 class EntryOut(BaseModel):
     id: Optional[int]
     account_id: int
+    account_name: str
     amount: int
 
 
@@ -50,6 +51,16 @@ class TransactionOut(BaseModel):
     tags: Optional[list] = None
     attachment_path: Optional[str] = None
     entries: list[EntryOut]
+
+
+def _entry_out(entry: Entry, session: Session) -> EntryOut:
+    account = session.get(Account, entry.account_id)
+    return EntryOut(
+        id=entry.id,
+        account_id=entry.account_id,
+        account_name=account.name if account else f"Account {entry.account_id}",
+        amount=entry.amount,
+    )
 
 
 def _next_number(session: Session, fy: FinancialYear, txn_type: str) -> str:
@@ -109,7 +120,7 @@ def create_transaction(data: TransactionIn, session: Session = Depends(get_sessi
 
     return TransactionOut(
         **txn.model_dump(),
-        entries=[EntryOut(id=e.id, account_id=e.account_id, amount=e.amount) for e in entries],
+        entries=[_entry_out(e, session) for e in entries],
     )
 
 
@@ -120,7 +131,7 @@ def _get_txn_with_entries(txn_id: int, session: Session) -> TransactionOut:
     entries = session.exec(select(Entry).where(Entry.transaction_id == txn_id)).all()
     return TransactionOut(
         **txn.model_dump(),
-        entries=[EntryOut(id=e.id, account_id=e.account_id, amount=e.amount) for e in entries],
+        entries=[_entry_out(e, session) for e in entries],
     )
 
 
@@ -146,7 +157,7 @@ def list_transactions(
         txn_entries = session.exec(select(Entry).where(Entry.transaction_id == txn.id)).all()
         result.append(TransactionOut(
             **txn.model_dump(),
-            entries=[EntryOut(id=e.id, account_id=e.account_id, amount=e.amount) for e in txn_entries],
+            entries=[_entry_out(e, session) for e in txn_entries],
         ))
     return result
 
@@ -165,6 +176,21 @@ def get_audit_log(txn_id: int, session: Session = Depends(get_session)):
 @router.get("/{txn_id}", response_model=TransactionOut)
 def get_transaction(txn_id: int, session: Session = Depends(get_session)):
     return _get_txn_with_entries(txn_id, session)
+
+
+@router.delete("/{txn_id}", status_code=204)
+def delete_transaction(txn_id: int, session: Session = Depends(get_session)):
+    txn = session.get(Transaction, txn_id)
+    if not txn:
+        raise HTTPException(status_code=404)
+    fy = session.get(FinancialYear, txn.fy_id)
+    if fy and fy.status == "locked":
+        raise HTTPException(status_code=403, detail="Financial year is locked")
+    entries = session.exec(select(Entry).where(Entry.transaction_id == txn_id)).all()
+    for entry in entries:
+        session.delete(entry)
+    session.delete(txn)
+    session.commit()
 
 
 class TransactionUpdate(BaseModel):
