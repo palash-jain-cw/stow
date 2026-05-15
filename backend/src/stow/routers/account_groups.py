@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 from stow.db import get_session
 from stow.models import AccountGroup
 
@@ -8,7 +8,7 @@ router = APIRouter(prefix="/account-groups", tags=["account-groups"])
 
 @router.get("", response_model=list[AccountGroup])
 def list_account_groups(session: Session = Depends(get_session)):
-    return session.exec(select(AccountGroup).order_by(AccountGroup.sort_order)).all()
+    return session.exec(select(AccountGroup).order_by(col(AccountGroup.sort_order))).all()
 
 
 @router.post("", response_model=AccountGroup, status_code=201)

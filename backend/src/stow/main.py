@@ -2,8 +2,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlmodel import SQLModel, Session
 from stow.db import engine
-from stow.models import AccountGroup, Account, OpeningBalance  # noqa: F401 — registers tables
-from stow.routers import account_groups, accounts, opening_balances
+from stow.models import (  # noqa: F401 — registers tables
+    AccountGroup, Account, OpeningBalance,
+    FinancialYear, Transaction, Entry, TransactionAuditLog,
+)
+from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions
 from stow.seed import seed_account_groups
 
 
@@ -19,6 +22,8 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(account_groups.router)
 app.include_router(accounts.router)
 app.include_router(opening_balances.router)
+app.include_router(financial_years.router)
+app.include_router(transactions.router)
 
 
 @app.get("/health")
