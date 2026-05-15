@@ -77,3 +77,23 @@ class TaxRuleOut(BaseModel):
     ltcg_rate_bps: int
     ltcg_exemption_paise: int
     effective_from: date
+
+
+class PriceQuoteOut(BaseModel):
+    id: int
+    account_id: int
+    price: int        # paise per unit
+    quote_date: date
+    source: str       # mfapi | yfinance
+
+
+class PortfolioItemOut(BaseModel):
+    lot_id: int
+    acquisition_date: date
+    units: int
+    remaining_units: int
+    cost_per_unit: int        # paise per unit
+    cost_basis: int           # paise
+    current_price_per_unit: int | None  # paise per unit; None if no quote
+    current_value: int | None           # paise
+    unrealized_gain: int | None         # paise

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 _today = date.today  # captured before Transaction class to avoid 'date' field shadowing
@@ -118,3 +118,16 @@ class CapitalGainsTaxRule(SQLModel, table=True):
     ltcg_rate_bps: int             # basis points (1250 = 12.5%)
     ltcg_exemption_paise: int      # paise (12_500_000 = ₹1.25L)
     effective_from: date
+
+
+class PriceQuote(SQLModel, table=True):
+    __tablename__ = "price_quote"  # type: ignore[assignment]
+    __table_args__ = (
+        UniqueConstraint("account_id", "quote_date", name="uq_price_quote_account_date"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    account_id: int = Field(foreign_key="account.id")
+    price: int        # paise per unit
+    quote_date: date
+    source: str       # mfapi | yfinance

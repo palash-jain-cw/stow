@@ -13,6 +13,18 @@ from stow.db import get_session
 from stow.seed import seed_account_groups
 
 
+def pytest_addoption(parser):
+    parser.addoption("--run-integration", action="store_true", default=False)
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--run-integration"):
+        skip = pytest.mark.skip(reason="pass --run-integration to run")
+        for item in items:
+            if item.get_closest_marker("integration"):
+                item.add_marker(skip)
+
+
 @pytest.fixture(scope="session")
 def engine():
     with PostgresContainer("postgres:16-alpine") as pg:
