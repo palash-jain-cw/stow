@@ -14,6 +14,7 @@ from stow.models import (  # noqa: F401 — registers tables
 )
 from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices, depreciation, recurring
 from stow.routers import scheduler as scheduler_router
+from stow.routers import ai as ai_router
 from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
 
@@ -43,6 +44,7 @@ app.include_router(prices.router)
 app.include_router(depreciation.router)
 app.include_router(recurring.router)
 app.include_router(scheduler_router.router)
+app.include_router(ai_router.router)
 
 
 @app.get("/health")
