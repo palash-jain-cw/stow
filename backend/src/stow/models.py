@@ -170,3 +170,42 @@ class PriceQuote(SQLModel, table=True):
     price: int        # paise per unit
     quote_date: date
     source: str       # mfapi | yfinance
+
+
+class ImportBatch(SQLModel, table=True):
+    __tablename__ = "import_batch"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    filename: str
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_bank: Optional[str] = None
+    statement_from: Optional[date] = None
+    statement_to: Optional[date] = None
+    bank_account_id: Optional[int] = Field(default=None, foreign_key="account.id")
+    status: str = "processing"  # processing | ready | posted
+    possible_duplicate: bool = False
+
+
+class StagingRow(SQLModel, table=True):
+    __tablename__ = "staging_row"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    batch_id: int = Field(foreign_key="import_batch.id")
+    raw_data: dict = Field(sa_column=Column(JSON))
+    date: date
+    amount: int  # paise — negative = debit
+    description: str
+    suggested_account_id: Optional[int] = Field(default=None, foreign_key="account.id")
+    status: str = "pending"  # pending | confirmed | discarded | reconciled
+    matched_transaction_id: Optional[int] = Field(default=None, foreign_key="transaction.id")
+    narration_override: Optional[str] = None
+    tags: Optional[list] = Field(default=None, sa_column=Column(JSON))
+    possible_duplicate: bool = False
+
+
+class MerchantRule(SQLModel, table=True):
+    __tablename__ = "merchant_rule"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pattern: str   # wildcard, case-insensitive, e.g. "BESCOM*"
+    account_id: int = Field(foreign_key="account.id")

@@ -11,10 +11,13 @@ from stow.models import (  # noqa: F401 — registers tables
     FinancialYear, Transaction, Entry, TransactionAuditLog,
     Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote, FdMetadata,
     RecurringSchedule, RecurringQueueItem,
+    ImportBatch, StagingRow, MerchantRule,
 )
 from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices, depreciation, recurring
 from stow.routers import scheduler as scheduler_router
 from stow.routers import ai as ai_router
+from stow.routers import imports as imports_router
+from stow.routers import merchant_rules as merchant_rules_router
 from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
 
@@ -45,6 +48,8 @@ app.include_router(depreciation.router)
 app.include_router(recurring.router)
 app.include_router(scheduler_router.router)
 app.include_router(ai_router.router)
+app.include_router(imports_router.router)
+app.include_router(merchant_rules_router.router)
 
 
 @app.get("/health")
