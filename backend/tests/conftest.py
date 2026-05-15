@@ -10,6 +10,7 @@ from testcontainers.postgres import PostgresContainer
 
 from stow.main import app
 from stow.db import get_session
+from stow.seed import seed_account_groups
 
 
 @pytest.fixture(scope="session")
@@ -18,6 +19,8 @@ def engine():
         url = pg.get_connection_url()
         engine = create_engine(url)
         SQLModel.metadata.create_all(engine)
+        with Session(engine) as s:
+            seed_account_groups(s)
         yield engine
 
 

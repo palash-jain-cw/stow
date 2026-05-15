@@ -1,5 +1,7 @@
-from sqlmodel import Session, select
-from stow.models import AccountGroup
+from datetime import date
+
+from sqlmodel import Session, col, select
+from stow.models import Account, AccountGroup, CapitalGainsTaxRule
 
 # (name, nature, cash_flow_tag, sort_order, parent_name)
 _GROUPS: list[tuple[str, str, str | None, int, str | None]] = [
@@ -47,14 +49,31 @@ _GROUPS: list[tuple[str, str, str | None, int, str | None]] = [
     # TDS accounts under Duties & Taxes
     ("TDS Receivable",             "asset",     "operating",  317, "Duties & Taxes"),
     ("TDS Payable",                "liability", "operating",  318, "Duties & Taxes"),
+    # Capital Gains — under Income
+    ("Capital Gains",              "income",    None,          73, "Income"),
+]
+
+# (name, group_name)
+_CAPITAL_GAINS_ACCOUNTS: list[tuple[str, str]] = [
+    ("Short Term Capital Gains", "Capital Gains"),
+    ("Long Term Capital Gains",  "Capital Gains"),
+    ("Capital Loss",             "Capital Gains"),
+]
+
+# Versioned equity CGT rules — add a new row when the budget changes; never edit old rows.
+# Rates in basis points; amounts in paise.
+_TAX_RULES: list[tuple[str, int, int, int, int, date]] = [
+    # (asset_type, holding_threshold_days, stcg_bps, ltcg_bps, ltcg_exemption_paise, effective_from)
+    # Pre-2024 budget (LTCG reintroduced Feb 2018)
+    ("equity", 365, 1500, 1000, 10_000_000, date(2018, 2, 1)),
+    # Union Budget 2024 (effective 23 Jul 2024)
+    ("equity", 365, 2000, 1250, 12_500_000, date(2024, 7, 23)),
 ]
 
 
 def seed_account_groups(session: Session) -> None:
     existing = {g.name: g for g in session.exec(select(AccountGroup)).all()}
 
-    # Two passes: roots first, then children (single level of nesting is enough
-    # since the hierarchy is at most 2 levels deep in seed data)
     for name, nature, cash_flow_tag, sort_order, parent_name in _GROUPS:
         if name in existing:
             continue
@@ -67,7 +86,32 @@ def seed_account_groups(session: Session) -> None:
             parent_id=parent_id,
         )
         session.add(group)
-        session.flush()  # get id before next iteration needs it as parent
+        session.flush()
         existing[name] = group
+
+    # Capital Gains accounts
+    existing_accounts = {a.name for a in session.exec(select(Account)).all()}
+    for acct_name, group_name in _CAPITAL_GAINS_ACCOUNTS:
+        if acct_name in existing_accounts:
+            continue
+        group = existing[group_name]
+        session.add(Account(name=acct_name, group_id=group.id or 0))
+
+    # Versioned tax rules — insert only if that effective_from date is not already present
+    existing_rules = {
+        (r.asset_type, r.effective_from)
+        for r in session.exec(select(CapitalGainsTaxRule)).all()
+    }
+    for asset_type, threshold, stcg_bps, ltcg_bps, exemption, eff_from in _TAX_RULES:
+        if (asset_type, eff_from) in existing_rules:
+            continue
+        session.add(CapitalGainsTaxRule(
+            asset_type=asset_type,
+            holding_threshold_days=threshold,
+            stcg_rate_bps=stcg_bps,
+            ltcg_rate_bps=ltcg_bps,
+            ltcg_exemption_paise=exemption,
+            effective_from=eff_from,
+        ))
 
     session.commit()

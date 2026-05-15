@@ -1,7 +1,10 @@
-def test_list_account_groups_empty(client):
+def test_list_account_groups_returns_seeded_groups(client):
     response = client.get("/account-groups")
     assert response.status_code == 200
-    assert response.json() == []
+    names = [g["name"] for g in response.json()]
+    assert "Capital Account" in names
+    assert "Bank Accounts" in names
+    assert "Capital Gains" in names
 
 
 def test_create_account_group(client):

@@ -81,3 +81,40 @@ class OpeningBalance(SQLModel, table=True):
     account_id: int = Field(foreign_key="account.id")
     fy_id: int = Field(foreign_key="financial_year.id")
     amount: int = 0  # paise
+
+
+class Lot(SQLModel, table=True):
+    __tablename__ = "lot"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    account_id: int = Field(foreign_key="account.id")
+    transaction_id: int = Field(foreign_key="transaction.id")
+    acquisition_date: date
+    units: int            # milliunits (1 unit = 1000 milliunits)
+    cost_per_unit: int    # paise per milliunit
+    remaining_units: int  # decremented on sale; 0 = fully consumed
+
+
+class CapitalGainEntry(SQLModel, table=True):
+    __tablename__ = "capital_gain_entry"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lot_id: int = Field(foreign_key="lot.id")
+    sale_transaction_id: int = Field(foreign_key="transaction.id")
+    units_sold: int           # milliunits consumed from this lot
+    sale_date: date
+    sale_price_per_unit: int  # paise per milliunit
+    gain: int                 # paise, signed (negative = loss)
+    gain_type: str            # stcg | ltcg
+
+
+class CapitalGainsTaxRule(SQLModel, table=True):
+    __tablename__ = "capital_gains_tax_rule"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    asset_type: str                # equity | debt
+    holding_threshold_days: int    # days >= this → ltcg
+    stcg_rate_bps: int             # basis points (2000 = 20%)
+    ltcg_rate_bps: int             # basis points (1250 = 12.5%)
+    ltcg_exemption_paise: int      # paise (12_500_000 = ₹1.25L)
+    effective_from: date
