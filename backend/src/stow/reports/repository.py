@@ -69,13 +69,29 @@ class ReportRepository:
                 closing_balance=closing,
             ))
 
-        # Trial balance totals: sum of all debit-side closing balances = sum of all credit-side
-        # Express as total_debit / total_credit on the period movements + opening columns
-        # Standard TB: total debit column = total credit column
-        total_debit  = sum(r.opening_balance for r in rows if r.opening_balance > 0) \
-                     + sum(r.debit for r in rows)
-        total_credit = sum(-r.opening_balance for r in rows if r.opening_balance < 0) \
-                     + sum(r.credit for r in rows)
+        # Totals are the Dr and Cr sides of closing balances (standard TB presentation).
+        # If opening balances were set without a matching counterpart (ADR 005), the TB
+        # won't balance on its own — add an Opening Balance Equity row as a plug so the
+        # report is always internally consistent, matching the balance sheet treatment.
+        total_debit  = sum(r.closing_balance for r in rows if r.closing_balance > 0)
+        total_credit = sum(-r.closing_balance for r in rows if r.closing_balance < 0)
+
+        obe = total_credit - total_debit  # negative means Dr imbalance; positive means Cr imbalance
+        if obe != 0:
+            ob_debit  = max(obe, 0)
+            ob_credit = max(-obe, 0)
+            rows.append(TrialBalanceRow(
+                account_id=0,
+                account_name="Opening Balance Equity",
+                group_name="Equity",
+                nature="equity",
+                opening_balance=0,
+                debit=ob_debit,
+                credit=ob_credit,
+                closing_balance=obe,
+            ))
+            total_debit  += ob_debit
+            total_credit += ob_credit
 
         return TrialBalanceReport(
             fy_id=fy_id,
