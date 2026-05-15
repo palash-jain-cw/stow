@@ -12,19 +12,10 @@ from stow.models import (  # noqa: F401 — registers tables
     Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote, FdMetadata,
     RecurringSchedule, RecurringQueueItem,
 )
-from stow.recurring import auto_post_pending, create_queue_entries_for_today
 from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices, depreciation, recurring
+from stow.routers import scheduler as scheduler_router
+from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
-
-
-async def _morning_job():
-    with Session(engine) as session:
-        create_queue_entries_for_today(session)
-
-
-async def _midnight_job():
-    with Session(engine) as session:
-        auto_post_pending(session)
 
 
 @asynccontextmanager
@@ -34,8 +25,8 @@ async def lifespan(app: FastAPI):
         seed_account_groups(session)
 
     async with AsyncScheduler() as scheduler:
-        await scheduler.add_schedule(_morning_job, CronTrigger(hour=6, minute=0))
-        await scheduler.add_schedule(_midnight_job, CronTrigger(hour=0, minute=0))
+        app.state.scheduler = scheduler
+        await register_schedules(scheduler)
         yield
 
 
@@ -51,6 +42,7 @@ app.include_router(tax_rules.router)
 app.include_router(prices.router)
 app.include_router(depreciation.router)
 app.include_router(recurring.router)
+app.include_router(scheduler_router.router)
 
 
 @app.get("/health")
