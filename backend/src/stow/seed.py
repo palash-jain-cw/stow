@@ -59,6 +59,7 @@ _CAPITAL_GAINS_ACCOUNTS: list[tuple[str, str]] = [
     ("Long Term Capital Gains",         "Capital Gains"),
     ("Capital Loss",                    "Capital Gains"),
     ("Fixed Deposit Interest Income",   "Indirect Income"),
+    ("Depreciation",                    "Indirect Expenses"),
 ]
 
 # Versioned equity CGT rules — add a new row when the budget changes; never edit old rows.

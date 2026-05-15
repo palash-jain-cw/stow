@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 from stow.db import get_session
+from stow.depreciation import unposted_depreciation
 from stow.models import Account, AccountGroup, Entry, FinancialYear, Transaction
 
 router = APIRouter(prefix="/financial-years", tags=["financial-years"])
@@ -25,6 +26,14 @@ def get_financial_year(fy_id: int, session: Session = Depends(get_session)):
     if not fy:
         raise HTTPException(status_code=404)
     return fy
+
+
+@router.get("/{fy_id}/pre-lock-check")
+def pre_lock_check(fy_id: int, session: Session = Depends(get_session)):
+    fy = session.get(FinancialYear, fy_id)
+    if not fy:
+        raise HTTPException(status_code=404)
+    return {"unposted_depreciation": unposted_depreciation(session, fy_id)}
 
 
 @router.post("/{fy_id}/lock", response_model=FinancialYear)

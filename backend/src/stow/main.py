@@ -7,7 +7,7 @@ from stow.models import (  # noqa: F401 — registers tables
     FinancialYear, Transaction, Entry, TransactionAuditLog,
     Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote, FdMetadata,
 )
-from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices
+from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices, depreciation
 from stow.seed import seed_account_groups
 
 
@@ -29,6 +29,7 @@ app.include_router(reports.router)
 app.include_router(investments.router)
 app.include_router(tax_rules.router)
 app.include_router(prices.router)
+app.include_router(depreciation.router)
 
 
 @app.get("/health")

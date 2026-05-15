@@ -28,6 +28,7 @@ class Account(SQLModel, table=True):
     is_archived: bool = False
     investment_subtype: Optional[str] = None  # equity_mf | stock | fd | ppf
     depreciation_rate: Optional[float] = None
+    accumulated_depreciation_account_id: Optional[int] = Field(default=None, foreign_key="account.id")
     price_source_id: Optional[str] = None
     currency: str = "INR"
 
