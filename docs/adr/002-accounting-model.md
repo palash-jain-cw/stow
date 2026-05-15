@@ -18,7 +18,7 @@ Seeded from Tally's standard Indian chart of accounts. Rationale: well-known, su
 Plain English terms used throughout (Account, Account Group, Transaction, Entry) rather than Tally jargon (Ledger, Group, Voucher). User is not familiar with Tally terminology.
 
 ### Indian Financial Year
-April 1 – March 31. Each FY is a discrete entity in the database. Transactions cannot be posted to a locked FY. Year-end closing is automatic (net profit transfers to Retained Earnings) but the lock is manual.
+April 1 – March 31. Each FY is a discrete entity in the database. Transactions cannot be posted to a locked FY. The lock is manual; see ADR 005 for the year-end closing model.
 
 ### GST Structure
 Full Input/Output split for CGST, SGST, IGST — seeded under Duties & Taxes group. User is GST-registered for freelance work. No GST return generation; bookkeeping only.

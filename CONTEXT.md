@@ -47,7 +47,7 @@ Seeded from Tally's standard Indian chart of accounts, fully customizable:
 Balance Sheet
 ├── Capital Account
 │   ├── Capital
-│   └── Reserves & Surplus (Retained Earnings auto-posted here at year-end)
+│   └── Reserves & Surplus (Retained Earnings opening balance updated at new FY creation — see ADR 005)
 ├── Loans (Liability)
 │   ├── Bank OD Accounts
 │   ├── Secured Loans
@@ -93,7 +93,7 @@ Profit & Loss
 ### Financial Year Lifecycle
 1. **Open** — FY is created, opening balances entered
 2. **Active** — transactions can be posted
-3. **Locked** — FY is closed, no further edits; net profit auto-transferred to Retained Earnings
+3. **Locked** — FY is closed, no further edits; net profit calculated and stored on the FY record. Retained Earnings is updated via opening balance carry-forward when the next FY is created (see ADR 005)
 
 ### Opening Balances
 - Dedicated bulk-entry screen when a new FY is created
