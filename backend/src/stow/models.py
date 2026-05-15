@@ -137,6 +137,28 @@ class FdMetadata(SQLModel, table=True):
     status: str = "active"      # active | matured | closed
 
 
+class RecurringSchedule(SQLModel, table=True):
+    __tablename__ = "recurring_schedule"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    template_transaction_id: int = Field(foreign_key="transaction.id")
+    frequency: str                       # daily | weekly | monthly | yearly
+    day_of_period: Optional[int] = None  # day of month (monthly) or day of week (weekly)
+    end_date: Optional[date] = None
+    next_due_date: date
+    is_active: bool = True
+
+
+class RecurringQueueItem(SQLModel, table=True):
+    __tablename__ = "recurring_queue_item"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    schedule_id: int = Field(foreign_key="recurring_schedule.id")
+    due_date: date
+    status: str = "pending"              # pending | confirmed | skipped | auto-posted
+    posted_transaction_id: Optional[int] = Field(default=None, foreign_key="transaction.id")
+
+
 class PriceQuote(SQLModel, table=True):
     __tablename__ = "price_quote"  # type: ignore[assignment]
     __table_args__ = (
