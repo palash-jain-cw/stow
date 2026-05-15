@@ -1,20 +1,79 @@
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, col, select
 from stow.db import get_session
-from stow.models import Account, Entry, Transaction
+from stow.models import Account, AccountGroup, Entry, FinancialYear, OpeningBalance, Transaction
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
-@router.get("", response_model=list[Account])
+class AccountOut(BaseModel):
+    id: int
+    name: str
+    group_id: int
+    group_name: str
+    nature: str  # asset | liability | equity | income | expense
+    is_archived: bool
+    investment_subtype: Optional[str]
+    depreciation_rate: Optional[float]
+    accumulated_depreciation_account_id: Optional[int]
+    price_source_id: Optional[str]
+    currency: str
+    balance: int  # paise, signed (positive = Dr). Active-FY balance = opening + entries. 0 if no active FY.
+
+
+def _balance_maps(session: Session, fy_id: int) -> tuple[dict[int, int], dict[int, int]]:
+    """Return (opening_balance_map, entry_sum_map) keyed by account_id for a given FY."""
+    ob_rows = session.exec(
+        select(OpeningBalance).where(OpeningBalance.fy_id == fy_id)
+    ).all()
+    ob_map = {ob.account_id: ob.amount for ob in ob_rows}
+
+    entry_rows = session.exec(
+        select(Entry.account_id, func.sum(Entry.amount).label("total"))
+        .join(Transaction, col(Entry.transaction_id) == col(Transaction.id))
+        .where(Transaction.fy_id == fy_id)
+        .group_by(Entry.account_id)
+    ).all()
+    entry_map = {row[0]: int(row[1]) for row in entry_rows}
+
+    return ob_map, entry_map
+
+
+def _to_out(account: Account, group: AccountGroup, ob_map: dict, entry_map: dict) -> AccountOut:
+    balance = ob_map.get(account.id, 0) + entry_map.get(account.id, 0)
+    return AccountOut(
+        id=account.id,
+        name=account.name,
+        group_id=account.group_id,
+        group_name=group.name,
+        nature=group.nature,
+        is_archived=account.is_archived,
+        investment_subtype=account.investment_subtype,
+        depreciation_rate=account.depreciation_rate,
+        accumulated_depreciation_account_id=account.accumulated_depreciation_account_id,
+        price_source_id=account.price_source_id,
+        currency=account.currency,
+        balance=balance,
+    )
+
+
+@router.get("", response_model=list[AccountOut])
 def list_accounts(
     include_archived: bool = False,
     session: Session = Depends(get_session),
 ):
-    q = select(Account)
+    q = select(Account, AccountGroup).join(AccountGroup, col(Account.group_id) == col(AccountGroup.id))
     if not include_archived:
         q = q.where(Account.is_archived == False)  # noqa: E712
-    return session.exec(q).all()
+    rows = session.exec(q).all()
+
+    active_fy = session.exec(select(FinancialYear).where(FinancialYear.status == "active")).first()
+    ob_map, entry_map = _balance_maps(session, active_fy.id) if active_fy else ({}, {})
+
+    return [_to_out(account, group, ob_map, entry_map) for account, group in rows]
 
 
 @router.post("", response_model=Account, status_code=201)
@@ -25,15 +84,24 @@ def create_account(account: Account, session: Session = Depends(get_session)):
     return account
 
 
-@router.get("/{account_id}", response_model=Account)
+@router.get("/{account_id}", response_model=AccountOut)
 def get_account(account_id: int, session: Session = Depends(get_session)):
-    account = session.get(Account, account_id)
-    if not account:
+    row = session.exec(
+        select(Account, AccountGroup)
+        .join(AccountGroup, col(Account.group_id) == col(AccountGroup.id))
+        .where(Account.id == account_id)
+    ).first()
+    if not row:
         raise HTTPException(status_code=404)
-    return account
+    account, group = row
+
+    active_fy = session.exec(select(FinancialYear).where(FinancialYear.status == "active")).first()
+    ob_map, entry_map = _balance_maps(session, active_fy.id) if active_fy else ({}, {})
+
+    return _to_out(account, group, ob_map, entry_map)
 
 
-@router.put("/{account_id}", response_model=Account)
+@router.put("/{account_id}", response_model=AccountOut)
 def update_account(account_id: int, data: Account, session: Session = Depends(get_session)):
     account = session.get(Account, account_id)
     if not account:
@@ -42,29 +110,27 @@ def update_account(account_id: int, data: Account, session: Session = Depends(ge
         setattr(account, field, value)
     session.commit()
     session.refresh(account)
-    return account
+    return get_account(account_id, session)
 
 
-@router.post("/{account_id}/archive", response_model=Account)
+@router.post("/{account_id}/archive", response_model=AccountOut)
 def archive_account(account_id: int, session: Session = Depends(get_session)):
     account = session.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404)
     account.is_archived = True
     session.commit()
-    session.refresh(account)
-    return account
+    return get_account(account_id, session)
 
 
-@router.post("/{account_id}/unarchive", response_model=Account)
+@router.post("/{account_id}/unarchive", response_model=AccountOut)
 def unarchive_account(account_id: int, session: Session = Depends(get_session)):
     account = session.get(Account, account_id)
     if not account:
         raise HTTPException(status_code=404)
     account.is_archived = False
     session.commit()
-    session.refresh(account)
-    return account
+    return get_account(account_id, session)
 
 
 @router.get("/{account_id}/ledger")
