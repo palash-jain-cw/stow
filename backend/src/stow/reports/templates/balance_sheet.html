@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block header_right %}Balance Sheet &mdash; as at {{ report.as_of_date.strftime('%d %b %Y') }}{% endblock %}
+
+{% block content %}
+<div class="report-title">
+  <h1>Balance Sheet</h1>
+  <div class="period">As at {{ report.as_of_date.strftime('%d %B %Y') }}</div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi neutral">
+    <div class="label">Total Assets</div>
+    <div class="value">{{ rupees(report.total_assets) }}</div>
+  </div>
+  <div class="kpi neutral">
+    <div class="label">Liabilities &amp; Equity</div>
+    <div class="value">{{ rupees(report.total_liabilities_and_equity) }}</div>
+  </div>
+  <div class="kpi {% if report.total_assets == report.total_liabilities_and_equity %}positive{% else %}negative{% endif %}">
+    <div class="label">Balanced</div>
+    <div class="value">{% if report.total_assets == report.total_liabilities_and_equity %}Yes{% else %}No{% endif %}</div>
+  </div>
+</div>
+
+<div class="two-col">
+
+  {# ── Assets ── #}
+  <div>
+    <div class="section-heading">Assets</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sec in report.asset_sections %}
+          <tr class="group-header">
+            <td colspan="2">{{ sec.group_name }}</td>
+          </tr>
+          {% for acc in sec.accounts %}
+            <tr>
+              <td style="padding-left:16px">{{ acc.account_name }}</td>
+              <td class="num">{{ rupees(acc.amount) }}</td>
+            </tr>
+          {% endfor %}
+          <tr class="subtotal">
+            <td>{{ sec.group_name }} — Subtotal</td>
+            <td class="num">{{ rupees(sec.subtotal) }}</td>
+          </tr>
+        {% endfor %}
+        <tr class="grand-total">
+          <td>Total Assets</td>
+          <td class="num">{{ rupees(report.total_assets) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  {# ── Liabilities & Equity ── #}
+  <div>
+    {% if report.liability_sections %}
+    <div class="section-heading">Liabilities</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sec in report.liability_sections %}
+          <tr class="group-header">
+            <td colspan="2">{{ sec.group_name }}</td>
+          </tr>
+          {% for acc in sec.accounts %}
+            <tr>
+              <td style="padding-left:16px">{{ acc.account_name }}</td>
+              <td class="num">{{ rupees(acc.amount) }}</td>
+            </tr>
+          {% endfor %}
+          <tr class="subtotal">
+            <td>{{ sec.group_name }} — Subtotal</td>
+            <td class="num">{{ rupees(sec.subtotal) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <div class="section-heading">Equity</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th class="num">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sec in report.equity_sections %}
+          <tr class="group-header">
+            <td colspan="2">{{ sec.group_name }}</td>
+          </tr>
+          {% for acc in sec.accounts %}
+            <tr>
+              <td style="padding-left:16px">{{ acc.account_name }}</td>
+              <td class="num">{{ rupees(acc.amount) }}</td>
+            </tr>
+          {% endfor %}
+          <tr class="subtotal">
+            <td>{{ sec.group_name }} — Subtotal</td>
+            <td class="num">{{ rupees(sec.subtotal) }}</td>
+          </tr>
+        {% endfor %}
+        <tr class="grand-total">
+          <td>Total Liabilities &amp; Equity</td>
+          <td class="num">{{ rupees(report.total_liabilities_and_equity) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

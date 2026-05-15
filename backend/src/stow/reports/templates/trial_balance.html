@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block header_right %}Trial Balance &mdash; FY {{ report.fy_start_date.strftime('%d %b %Y') }} to {{ report.fy_end_date.strftime('%d %b %Y') }}{% endblock %}
+
+{% block content %}
+<div class="report-title">
+  <h1>Trial Balance</h1>
+  <div class="period">For the period {{ report.fy_start_date.strftime('%d %B %Y') }} &ndash; {{ report.fy_end_date.strftime('%d %B %Y') }}</div>
+</div>
+
+{% set total_dr_ob = namespace(v=0) %}
+{% set total_cr_ob = namespace(v=0) %}
+{% for r in report.rows %}
+  {% if r.opening_balance > 0 %}{% set total_dr_ob.v = total_dr_ob.v + r.opening_balance %}{% endif %}
+  {% if r.opening_balance < 0 %}{% set total_cr_ob.v = total_cr_ob.v + (-r.opening_balance) %}{% endif %}
+{% endfor %}
+
+<div class="kpi-row">
+  <div class="kpi neutral">
+    <div class="label">Total Debit</div>
+    <div class="value">{{ rupees(report.total_debit) }}</div>
+  </div>
+  <div class="kpi neutral">
+    <div class="label">Total Credit</div>
+    <div class="value">{{ rupees(report.total_credit) }}</div>
+  </div>
+  <div class="kpi {% if report.total_debit == report.total_credit %}positive{% else %}negative{% endif %}">
+    <div class="label">Balanced</div>
+    <div class="value">{% if report.total_debit == report.total_credit %}Yes{% else %}No{% endif %}</div>
+  </div>
+</div>
+
+{% set current_nature = namespace(v="") %}
+<table>
+  <thead>
+    <tr>
+      <th>Account</th>
+      <th>Group</th>
+      <th class="num">Opening</th>
+      <th class="num">Debit</th>
+      <th class="num">Credit</th>
+      <th class="num">Closing</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in report.rows | sort(attribute='nature') %}
+      {% if r.nature != current_nature.v %}
+        {% set current_nature.v = r.nature %}
+        <tr class="group-header">
+          <td colspan="6">{{ r.nature | title }}</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <td>{{ r.account_name }}</td>
+        <td class="muted">{{ r.group_name }}</td>
+        <td class="num">{% if r.opening_balance != 0 %}{{ rupees(r.opening_balance) }}{% else %}&mdash;{% endif %}</td>
+        <td class="num">{% if r.debit != 0 %}{{ rupees(r.debit) }}{% else %}&mdash;{% endif %}</td>
+        <td class="num">{% if r.credit != 0 %}{{ rupees(r.credit) }}{% else %}&mdash;{% endif %}</td>
+        <td class="num">{% if r.closing_balance != 0 %}{{ rupees(r.closing_balance) }}{% else %}&mdash;{% endif %}</td>
+      </tr>
+    {% endfor %}
+    <tr class="grand-total">
+      <td colspan="2">Totals</td>
+      <td class="num">&mdash;</td>
+      <td class="num">{{ rupees(report.total_debit) }}</td>
+      <td class="num">{{ rupees(report.total_credit) }}</td>
+      <td class="num">&mdash;</td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}

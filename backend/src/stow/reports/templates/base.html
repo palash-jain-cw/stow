@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm 18mm 16mm;
+    @top-center {
+      content: element(page-header);
+      font-family: Inter, sans-serif;
+    }
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 8pt;
+      color: #94a3b8;
+      font-family: Inter, sans-serif;
+    }
+  }
+
+  :root {
+    --brand:   #1e40af;
+    --accent:  #3b82f6;
+    --subtle:  #f1f5f9;
+    --border:  #e2e8f0;
+    --text:    #0f172a;
+    --muted:   #64748b;
+    --green:   #15803d;
+    --red:     #b91c1c;
+    --radius:  4px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: Inter, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 9pt;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  /* ── Page header (repeats on each page) ── */
+  #page-header {
+    position: running(page-header);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding-bottom: 4px;
+    border-bottom: 2px solid var(--brand);
+    margin-bottom: 4px;
+  }
+  #page-header .org { font-size: 11pt; font-weight: 700; color: var(--brand); }
+  #page-header .sub { font-size: 7.5pt; color: var(--muted); }
+
+  /* ── Report title block ── */
+  .report-title {
+    margin-bottom: 16px;
+  }
+  .report-title h1 {
+    font-size: 14pt;
+    font-weight: 700;
+    color: var(--brand);
+    letter-spacing: -0.3px;
+  }
+  .report-title .period {
+    font-size: 8.5pt;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 14px;
+    font-size: 8.5pt;
+  }
+  thead tr {
+    background: var(--brand);
+    color: #fff;
+  }
+  thead th {
+    padding: 5px 8px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 8pt;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+  thead th.num { text-align: right; }
+
+  tbody tr:nth-child(even) { background: var(--subtle); }
+  tbody tr:hover { background: #dbeafe22; }
+  tbody td { padding: 4px 8px; vertical-align: top; }
+  tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody td.muted { color: var(--muted); font-size: 7.5pt; }
+
+  /* Group header rows */
+  tr.group-header td {
+    background: #dbeafe;
+    color: var(--brand);
+    font-weight: 600;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 5px 8px;
+  }
+
+  /* Subtotal rows */
+  tr.subtotal td {
+    background: #eff6ff;
+    font-weight: 600;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Grand total rows */
+  tr.grand-total td {
+    background: var(--brand);
+    color: #fff;
+    font-weight: 700;
+    font-size: 9pt;
+    border-top: 2px solid var(--brand);
+  }
+  tr.grand-total td.num { text-align: right; }
+
+  /* Profit / loss highlight */
+  tr.profit td  { color: var(--green); font-weight: 700; }
+  tr.loss td    { color: var(--red);   font-weight: 700; }
+
+  /* ── KPI cards (used in summary rows) ── */
+  .kpi-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .kpi {
+    flex: 1;
+    background: var(--subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+  }
+  .kpi .label { font-size: 7pt; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .kpi .value { font-size: 12pt; font-weight: 700; margin-top: 2px; }
+  .kpi.positive .value { color: var(--green); }
+  .kpi.negative .value { color: var(--red); }
+  .kpi.neutral  .value { color: var(--brand); }
+
+  /* ── Section divider ── */
+  .section-heading {
+    font-size: 9pt;
+    font-weight: 700;
+    color: var(--brand);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 6px 0 3px;
+    border-bottom: 1px solid var(--accent);
+    margin-bottom: 6px;
+  }
+
+  /* ── Two-column layout (Balance Sheet) ── */
+  .two-col {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .two-col > div { flex: 1; }
+</style>
+</head>
+<body>
+
+<div id="page-header">
+  <div>
+    <div class="org">Stow</div>
+    <div class="sub">Personal Accounts</div>
+  </div>
+  <div class="sub">{% block header_right %}{% endblock %}</div>
+</div>
+
+{% block content %}{% endblock %}
+
+</body>
+</html>

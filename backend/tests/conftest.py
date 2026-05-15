@@ -1,5 +1,7 @@
 import os
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+# WeasyPrint dlopen()s pango/gobject lazily; setting this before the first PDF request is sufficient.
+os.environ.setdefault("DYLD_LIBRARY_PATH", "/opt/homebrew/lib")
 
 import pytest
 from fastapi.testclient import TestClient

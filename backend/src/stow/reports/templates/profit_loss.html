@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block header_right %}Profit &amp; Loss &mdash; FY {{ report.fy_start_date.strftime('%d %b %Y') }} to {{ report.fy_end_date.strftime('%d %b %Y') }}{% endblock %}
+
+{% block content %}
+<div class="report-title">
+  <h1>Profit &amp; Loss Statement</h1>
+  <div class="period">For the period {{ report.fy_start_date.strftime('%d %B %Y') }} &ndash; {{ report.fy_end_date.strftime('%d %B %Y') }}</div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi positive">
+    <div class="label">Total Income</div>
+    <div class="value">{{ rupees(report.total_income) }}</div>
+  </div>
+  <div class="kpi negative">
+    <div class="label">Total Expenses</div>
+    <div class="value">{{ rupees(report.total_expenses) }}</div>
+  </div>
+  <div class="kpi {% if report.net_profit >= 0 %}positive{% else %}negative{% endif %}">
+    <div class="label">Net {% if report.net_profit >= 0 %}Profit{% else %}Loss{% endif %}</div>
+    <div class="value">{{ rupees(report.net_profit | abs) }}</div>
+  </div>
+</div>
+
+<div class="section-heading">Income</div>
+<table>
+  <thead>
+    <tr>
+      <th>Account</th>
+      <th>Group</th>
+      <th class="num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for grp in report.income_groups %}
+      <tr class="group-header">
+        <td colspan="3">{{ grp.group_name }}</td>
+      </tr>
+      {% for acc in grp.accounts %}
+        <tr>
+          <td style="padding-left:18px">{{ acc.account_name }}</td>
+          <td class="muted">{{ grp.group_name }}</td>
+          <td class="num">{{ rupees(acc.amount) }}</td>
+        </tr>
+      {% endfor %}
+      <tr class="subtotal">
+        <td colspan="2">{{ grp.group_name }} — Subtotal</td>
+        <td class="num">{{ rupees(grp.subtotal) }}</td>
+      </tr>
+    {% endfor %}
+    <tr class="grand-total">
+      <td colspan="2">Total Income</td>
+      <td class="num">{{ rupees(report.total_income) }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="section-heading">Expenses</div>
+<table>
+  <thead>
+    <tr>
+      <th>Account</th>
+      <th>Group</th>
+      <th class="num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for grp in report.expense_groups %}
+      <tr class="group-header">
+        <td colspan="3">{{ grp.group_name }}</td>
+      </tr>
+      {% for acc in grp.accounts %}
+        <tr>
+          <td style="padding-left:18px">{{ acc.account_name }}</td>
+          <td class="muted">{{ grp.group_name }}</td>
+          <td class="num">{{ rupees(acc.amount) }}</td>
+        </tr>
+      {% endfor %}
+      <tr class="subtotal">
+        <td colspan="2">{{ grp.group_name }} — Subtotal</td>
+        <td class="num">{{ rupees(grp.subtotal) }}</td>
+      </tr>
+    {% endfor %}
+    <tr class="grand-total">
+      <td colspan="2">Total Expenses</td>
+      <td class="num">{{ rupees(report.total_expenses) }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <tbody>
+    <tr class="{% if report.net_profit >= 0 %}profit{% else %}loss{% endif %} grand-total">
+      <td>Net {% if report.net_profit >= 0 %}Profit{% else %}Loss{% endif %}</td>
+      <td class="num">{{ rupees(report.net_profit | abs) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}

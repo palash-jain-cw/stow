@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block header_right %}Cash Flow &mdash; FY {{ report.fy_start_date.strftime('%d %b %Y') }} to {{ report.fy_end_date.strftime('%d %b %Y') }}{% endblock %}
+
+{% block content %}
+<div class="report-title">
+  <h1>Cash Flow Statement</h1>
+  <div class="period">For the period {{ report.fy_start_date.strftime('%d %B %Y') }} &ndash; {{ report.fy_end_date.strftime('%d %B %Y') }} &nbsp;&middot;&nbsp; Indirect Method</div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi neutral">
+    <div class="label">Opening Cash</div>
+    <div class="value">{{ rupees(report.opening_cash) }}</div>
+  </div>
+  <div class="kpi {% if report.net_change_in_cash >= 0 %}positive{% else %}negative{% endif %}">
+    <div class="label">Net Change</div>
+    <div class="value">{{ rupees(report.net_change_in_cash) }}</div>
+  </div>
+  <div class="kpi {% if report.closing_cash >= 0 %}positive{% else %}negative{% endif %}">
+    <div class="label">Closing Cash</div>
+    <div class="value">{{ rupees(report.closing_cash) }}</div>
+  </div>
+</div>
+
+{% set section_labels = {"operating": "Operating Activities", "investing": "Investing Activities", "financing": "Financing Activities"} %}
+
+{% for sec in report.sections %}
+<div class="section-heading">{{ section_labels[sec.tag] }}</div>
+<table>
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th class="num">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in sec.items %}
+      <tr {% if item.label == "Net Profit / (Loss)" %}style="font-weight:600"{% endif %}>
+        <td>{{ item.label }}</td>
+        <td class="num">{{ rupees(item.amount) }}</td>
+      </tr>
+    {% endfor %}
+    <tr class="subtotal">
+      <td>Net Cash from {{ section_labels[sec.tag] }}</td>
+      <td class="num">{{ rupees(sec.subtotal) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endfor %}
+
+<table>
+  <tbody>
+    <tr class="grand-total">
+      <td>Opening Cash &amp; Equivalents</td>
+      <td class="num">{{ rupees(report.opening_cash) }}</td>
+    </tr>
+    <tr class="grand-total">
+      <td>Net Change in Cash</td>
+      <td class="num">{{ rupees(report.net_change_in_cash) }}</td>
+    </tr>
+    <tr class="grand-total {% if report.closing_cash >= 0 %}profit{% endif %}">
+      <td>Closing Cash &amp; Equivalents</td>
+      <td class="num">{{ rupees(report.closing_cash) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endblock %}
