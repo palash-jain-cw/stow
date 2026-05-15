@@ -87,6 +87,31 @@ class PriceQuoteOut(BaseModel):
     source: str       # mfapi | yfinance
 
 
+class FdCreateIn(BaseModel):
+    name: str
+    principal: int
+    interest_rate: int
+    start_date: date
+    maturity_date: date
+    compounding: str
+
+
+class FdOut(BaseModel):
+    account_id: int
+    name: str
+    principal: int
+    interest_rate: int
+    start_date: date
+    maturity_date: date
+    compounding: str
+    status: str
+
+
+class FdListItemOut(FdOut):
+    days_to_maturity: int
+    accrued_interest: int
+
+
 class PortfolioItemOut(BaseModel):
     lot_id: int
     acquisition_date: date

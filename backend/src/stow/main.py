@@ -5,7 +5,7 @@ from stow.db import engine
 from stow.models import (  # noqa: F401 — registers tables
     AccountGroup, Account, OpeningBalance,
     FinancialYear, Transaction, Entry, TransactionAuditLog,
-    Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote,
+    Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote, FdMetadata,
 )
 from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices
 from stow.seed import seed_account_groups

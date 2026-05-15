@@ -120,6 +120,22 @@ class CapitalGainsTaxRule(SQLModel, table=True):
     effective_from: date
 
 
+class FdMetadata(SQLModel, table=True):
+    __tablename__ = "fd_metadata"  # type: ignore[assignment]
+    __table_args__ = (
+        UniqueConstraint("account_id", name="uq_fd_metadata_account"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    account_id: int = Field(foreign_key="account.id")
+    principal: int              # paise
+    interest_rate: int          # basis points (e.g. 750 = 7.50% p.a.)
+    start_date: date
+    maturity_date: date
+    compounding: str            # simple | monthly | quarterly | yearly
+    status: str = "active"      # active | matured | closed
+
+
 class PriceQuote(SQLModel, table=True):
     __tablename__ = "price_quote"  # type: ignore[assignment]
     __table_args__ = (

@@ -55,9 +55,10 @@ _GROUPS: list[tuple[str, str, str | None, int, str | None]] = [
 
 # (name, group_name)
 _CAPITAL_GAINS_ACCOUNTS: list[tuple[str, str]] = [
-    ("Short Term Capital Gains", "Capital Gains"),
-    ("Long Term Capital Gains",  "Capital Gains"),
-    ("Capital Loss",             "Capital Gains"),
+    ("Short Term Capital Gains",        "Capital Gains"),
+    ("Long Term Capital Gains",         "Capital Gains"),
+    ("Capital Loss",                    "Capital Gains"),
+    ("Fixed Deposit Interest Income",   "Indirect Income"),
 ]
 
 # Versioned equity CGT rules — add a new row when the budget changes; never edit old rows.
