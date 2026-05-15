@@ -106,15 +106,16 @@ Investment accounts are split into four sub-types with different tracking needs:
 |---|---|---|
 | Equity Mutual Funds | Yes — STCG/LTCG | FIFO lots (units, NAV, date) |
 | Direct Stocks | Yes — STCG/LTCG | FIFO lots (shares, price, date) |
-| Fixed Deposits | No — interest is income | Principal, rate, maturity date, TDS |
-| PPF | No — tax-free | Contribution tracking, balance |
+| Fixed Deposits | No — interest is income | Principal, rate (bps), maturity date, compounding (simple/monthly/quarterly/yearly) |
 | Real Estate | v2 | — |
 
 - Equity MF and stock accounts maintain a **Holding** (set of open Lots)
+- Lot units are stored as **milliunits** (1 unit = 1,000 milliunits); cost per unit in paise per milliunit
 - On sale, FIFO lots are consumed and STCG/LTCG calculated automatically
+- STCG/LTCG tax rates are managed via a versioned **Capital Gains Tax Rule** table (not hardcoded), allowing rates to be updated when legislation changes
 - A **Capital Gains Report** is generated for ITR Schedule CG
 - FD interest income is recorded as a Receipt transaction; TDS deducted tracked under TDS Receivable
-- PPF contributions recorded as Payment transactions to a PPF asset account
+- PPF is out of scope
 
 ### Live Prices (Equity MF & Stocks)
 - Each equity MF account carries an AMFI scheme code (**Price Source ID**); each stock account carries an NSE ticker symbol
@@ -177,8 +178,14 @@ All reports are generated server-side and exportable as PDF.
 - On future imports, saved rules are applied first; AI fills remaining unmapped rows
 - Rules can be managed (viewed, edited, deleted) from settings
 
+### Background Scheduler
+- APScheduler 4.x running in the FastAPI process, timezone: Asia/Kolkata (IST)
+- Jobs: daily price fetch (equity MF NAV + stock prices) and recurring transaction queue population
+- Management API at `/scheduler/jobs` — list jobs, trigger manually
+
 ### AI Stack
 - Any OpenAI-compatible local inference server (oMLX, Ollama, LM Studio, vLLM, etc.)
+- LLM client: `pydantic_ai.Agent` wrapping the OpenAI-compatible inference server
 - Configured via `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL` environment variables
 - No external API calls — all inference is on-device
 
@@ -186,11 +193,12 @@ All reports are generated server-side and exportable as PDF.
 
 | Layer | Choice |
 |---|---|
-| Frontend | Vite + React + shadcn/ui + React Query |
+| Frontend | Vite + React 19 + TanStack Query v5 + lucide-react (no component library — custom design system) |
 | Backend | FastAPI (Python) |
 | ORM | SQLModel + Alembic |
 | Database | PostgreSQL |
-| AI | OpenAI-compatible local inference API (oMLX, Ollama, LM Studio, vLLM) |
+| AI | pydantic_ai + OpenAI-compatible local inference (oMLX, Ollama, LM Studio, vLLM) |
+| Scheduler | APScheduler 4.x (IST timezone) |
 | PDF export | WeasyPrint or ReportLab |
 | PDF parsing | pdfplumber or pymupdf |
 | Deployment | Docker Compose (local machine) |

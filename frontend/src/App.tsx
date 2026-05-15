@@ -1,4 +1,5 @@
 import { Routes, Route } from 'react-router-dom'
+import { Shell } from './Shell'
 import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import Accounts from './pages/Accounts'
@@ -11,14 +12,16 @@ import Settings from './pages/Settings'
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/transactions" element={<Transactions />} />
-      <Route path="/accounts" element={<Accounts />} />
-      <Route path="/accounts/:id" element={<AccountDetail />} />
-      <Route path="/import" element={<Import />} />
-      <Route path="/reports" element={<Reports />} />
-      <Route path="/portfolio" element={<Portfolio />} />
-      <Route path="/settings" element={<Settings />} />
+      <Route element={<Shell />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/transactions" element={<Transactions />} />
+        <Route path="/accounts" element={<Accounts />} />
+        <Route path="/accounts/:id" element={<AccountDetail />} />
+        <Route path="/import" element={<Import />} />
+        <Route path="/reports" element={<Reports />} />
+        <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/settings" element={<Settings />} />
+      </Route>
     </Routes>
   )
 }
