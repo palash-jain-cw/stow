@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import BigInteger, Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 _today = date.today  # captured before Transaction class to avoid 'date' field shadowing
@@ -209,3 +209,11 @@ class MerchantRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     pattern: str   # wildcard, case-insensitive, e.g. "BESCOM*"
     account_id: int = Field(foreign_key="account.id")
+
+
+class TelegramUser(SQLModel, table=True):
+    __tablename__ = "telegram_user"  # type: ignore[assignment]
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    telegram_user_id: int = Field(sa_column=Column(BigInteger, unique=True, nullable=False))
+    username: Optional[str] = None
