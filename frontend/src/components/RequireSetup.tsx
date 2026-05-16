@@ -5,13 +5,15 @@ import { api, queryKeys } from '../api/api'
 interface FinancialYear { id: number }
 
 export function RequireSetup() {
-  const { data: fys, isPending } = useQuery<FinancialYear[]>({
+  const { data: fys } = useQuery<FinancialYear[]>({
     queryKey: queryKeys.financialYears.all(),
     queryFn: () => api.get<FinancialYear[]>('/financial-years'),
     staleTime: 0,
   })
 
-  if (isPending) return null
-  if (fys!.length === 0) return <Navigate to="/onboarding" replace />
+  // Only redirect once we have a confirmed empty response; render normally while loading
+  if (fys !== undefined && fys.length === 0) {
+    return <Navigate to="/onboarding" replace />
+  }
   return <Outlet />
 }
