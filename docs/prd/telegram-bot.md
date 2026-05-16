@@ -152,7 +152,7 @@ The agent is implemented with **tools** (thin wrappers over backend endpoints) a
 
 #### Web Chat Window
 
-- Persistent chat panel in the web app (sidebar or floating drawer)
+- Persistent sidebar panel in the web app (right side, always visible)
 - Connects to the same agent via a new WebSocket or SSE endpoint
 - Supports text input and file upload (images, PDFs)
 - Renders proposal cards as interactive UI components (buttons → inline edit forms)
