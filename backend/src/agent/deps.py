@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +15,14 @@ class StowDeps:
     http_client: httpx.AsyncClient
     # Required by SubAgentDepsProtocol — stores compiled subagent instances
     subagents: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def build(cls) -> StowDeps:
+        """Create deps from environment. Caller owns the http_client lifecycle."""
+        return cls(
+            base_url=os.environ.get("STOW_BASE_URL", "http://localhost:8000"),
+            http_client=httpx.AsyncClient(timeout=60.0),
+        )
 
     def clone_for_subagent(self, max_depth: int = 0) -> StowDeps:
         """Return a fresh deps clone for a subagent invocation.

@@ -12,7 +12,7 @@ from stow.models import (  # noqa: F401 — registers tables
     FinancialYear, Transaction, Entry, TransactionAuditLog,
     Lot, CapitalGainEntry, CapitalGainsTaxRule, PriceQuote, FdMetadata,
     RecurringSchedule, RecurringQueueItem,
-    ImportBatch, StagingRow, MerchantRule,
+    ImportBatch, StagingRow, MerchantRule, TelegramUser,
 )
 from stow.routers import account_groups, accounts, opening_balances, financial_years, transactions, reports, investments, tax_rules, prices, depreciation, recurring
 from stow.routers import scheduler as scheduler_router
@@ -23,16 +23,20 @@ from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
 
 
+from agent.transport.telegram.bot import lifespan_telegram
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         seed_account_groups(session)
 
-    async with AsyncScheduler() as scheduler:
-        app.state.scheduler = scheduler
-        await register_schedules(scheduler)
-        yield
+    async with lifespan_telegram(app):
+        async with AsyncScheduler() as scheduler:
+            app.state.scheduler = scheduler
+            await register_schedules(scheduler)
+            yield
 
 
 app = FastAPI(lifespan=lifespan)
