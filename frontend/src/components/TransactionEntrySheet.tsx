@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Plus, Paperclip, CheckCircle, AlertCircle, X } from 'lucide-react'
+import { ChevronDown, Plus, Paperclip, CheckCircle, AlertCircle, X, ChevronUp } from 'lucide-react'
 import { Sheet } from './Sheet'
 import { Tooltip } from './Tooltip'
 import { api, queryKeys } from '../api/api'
@@ -152,46 +152,206 @@ function inputCls() {
   return 'w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-white'
 }
 
-// ── Account select ─────────────────────────────────────────────────────────
+// ── Account combobox ───────────────────────────────────────────────────────
 
-function AccountSelect({
-  label,
-  tooltip,
-  value,
-  onChange,
-  accounts,
-}: {
+interface GroupedSection {
+  nature: string
+  items: AccountOut[]
+  startIdx: number
+}
+
+interface AccountComboboxProps {
   label: string
   tooltip: string
   value: number | null
   onChange: (id: number | null) => void
   accounts: AccountOut[]
-}) {
+  error?: string
+  required?: boolean
+}
+
+function AccountCombobox({
+  label,
+  tooltip,
+  value,
+  onChange,
+  accounts,
+  error,
+}: AccountComboboxProps) {
+  const [query, setQuery] = useState(() => accounts.find(a => a.id === value)?.name ?? '')
+  const [open, setOpen] = useState(false)
+  const [highlightedIdx, setHighlightedIdx] = useState(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  // Sync input text when value changes externally
+  useEffect(() => {
+    const acc = accounts.find(a => a.id === value)
+    setQuery(acc?.name ?? '')
+  }, [value, accounts])
+
+  // Click-outside to close
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        // Restore display name if user typed but didn't select
+        const acc = accounts.find(a => a.id === value)
+        setQuery(acc?.name ?? '')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [value, accounts])
+
+  const filtered = query.trim() === ''
+    ? accounts
+    : accounts.filter(a => a.name.toLowerCase().includes(query.trim().toLowerCase()))
+
+  // Reset highlight when filtered list changes
+  useEffect(() => {
+    setHighlightedIdx(0)
+  }, [query])
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (open && listRef.current) {
+      const item = listRef.current.children[highlightedIdx] as HTMLElement | undefined
+      item?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [highlightedIdx, open])
+
+  const selectAccount = (acc: AccountOut) => {
+    onChange(acc.id)
+    setQuery(acc.name)
+    setOpen(false)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+        setOpen(true)
+        e.preventDefault()
+      }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIdx(i => Math.min(i + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIdx(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (filtered[highlightedIdx]) {
+        selectAccount(filtered[highlightedIdx])
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+      const acc = accounts.find(a => a.id === value)
+      setQuery(acc?.name ?? '')
+    } else if (e.key === 'Tab') {
+      setOpen(false)
+      const acc = accounts.find(a => a.id === value)
+      setQuery(acc?.name ?? '')
+    }
+  }
+
+  // Group for display in dropdown
   const natures = ['asset', 'liability', 'equity', 'income', 'expense']
-  const grouped = natures
-    .map(n => ({ nature: n, items: accounts.filter(a => a.nature === n) }))
-    .filter(g => g.items.length > 0)
+
+  // Build flat filtered list with group separators for display
+  // We need flat index mapping for keyboard nav, so build a flat array of accounts
+  // grouped display is cosmetic only
+  const groups: GroupedSection[] = []
+  let idx = 0
+  for (const nature of natures) {
+    const items = filtered.filter(a => a.nature === nature)
+    if (items.length > 0) {
+      groups.push({ nature, items, startIdx: idx })
+      idx += items.length
+    }
+  }
 
   return (
-    <div>
+    <div ref={containerRef} className="relative">
       <div className="flex items-center gap-1.5 mb-2">
         <FieldLabel>{label}</FieldLabel>
         <Tooltip content={tooltip} />
       </div>
-      <select
-        value={value ?? ''}
-        onChange={e => onChange(e.target.value ? Number(e.target.value) : null)}
-        className={inputCls() + ' cursor-pointer'}
-      >
-        <option value="">Select account</option>
-        {grouped.map(g => (
-          <optgroup key={g.nature} label={g.nature.charAt(0).toUpperCase() + g.nature.slice(1)}>
-            {g.items.map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        autoComplete="off"
+        value={query}
+        placeholder="Type to search accounts…"
+        onChange={e => {
+          setQuery(e.target.value)
+          setOpen(true)
+          if (e.target.value === '') {
+            onChange(null)
+          }
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKeyDown}
+        className={
+          inputCls() +
+          (error ? ' border-red-400 focus:ring-red-400' : '')
+        }
+      />
+      {error && (
+        <p className="mt-1 text-xs text-red-500">{error}</p>
+      )}
+
+      {open && (
+        <ul
+          ref={listRef}
+          role="listbox"
+          className="absolute z-50 mt-1 w-full bg-white border border-zinc-200 rounded-xl shadow-lg max-h-56 overflow-y-auto"
+        >
+          {filtered.length === 0 ? (
+            <li className="px-3.5 py-2.5 text-sm text-zinc-400">No accounts found</li>
+          ) : (
+            groups.map(group => (
+              <li key={group.nature}>
+                <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400 select-none">
+                  {group.nature.charAt(0).toUpperCase() + group.nature.slice(1)}
+                </div>
+                <ul>
+                  {group.items.map((acc, relIdx) => {
+                    const absIdx = group.startIdx + relIdx
+                    const isHighlighted = absIdx === highlightedIdx
+                    return (
+                      <li
+                        key={acc.id}
+                        role="option"
+                        aria-selected={acc.id === value}
+                        onMouseDown={e => {
+                          e.preventDefault()
+                          selectAccount(acc)
+                        }}
+                        onMouseEnter={() => setHighlightedIdx(absIdx)}
+                        className={`px-3.5 py-2 text-sm cursor-pointer select-none ${
+                          isHighlighted
+                            ? 'bg-blue-50 text-blue-700'
+                            : acc.id === value
+                            ? 'bg-zinc-50 text-zinc-900 font-medium'
+                            : 'text-zinc-700 hover:bg-zinc-50'
+                        }`}
+                      >
+                        {acc.name}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
     </div>
   )
 }
@@ -334,6 +494,11 @@ function TagsInput({ tags, onChange }: { tags: string[]; onChange: (t: string[])
 
 // ── Main component ─────────────────────────────────────────────────────────
 
+interface AccountErrors {
+  fromAccount?: string
+  toAccount?: string
+}
+
 export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved }: Props) {
   const qc = useQueryClient()
   const isEdit = !!editTxn
@@ -346,6 +511,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
   ])
   const [attachmentName, setAttachmentName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [accountErrors, setAccountErrors] = useState<AccountErrors>({})
 
   // Reset on open
   useEffect(() => {
@@ -380,6 +546,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
       }
       setAttachmentName(null)
       setError(null)
+      setAccountErrors({})
     }
   }, [open])
 
@@ -402,6 +569,28 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
   const journalDr = journalEntries.reduce((s, e) => s + rupeesToPaise(e.dr), 0)
   const journalCr = journalEntries.reduce((s, e) => s + rupeesToPaise(e.cr), 0)
   const journalBalanced = draft.type === 'journal' ? (journalDr > 0 && journalDr === journalCr) : true
+
+  // canSave: for non-journal, only check amount (not narration)
+  const canSave = draft.type === 'journal'
+    ? journalBalanced
+    : !!draft.amountRupees && parseFloat(draft.amountRupees) > 0
+
+  const handleSave = () => {
+    // Validate accounts for non-journal types
+    if (draft.type !== 'journal') {
+      const errs: AccountErrors = {}
+      if (!draft.fromAccountId) errs.fromAccount = 'From account is required'
+      if (!draft.toAccountId) errs.toAccount = 'To account is required'
+      if (errs.fromAccount || errs.toAccount) {
+        setAccountErrors(errs)
+        // Open the more-details panel so errors are visible
+        setMoreOpen(true)
+        return
+      }
+    }
+    setAccountErrors({})
+    saveMutation.mutate()
+  }
 
   // Save mutation
   const saveMutation = useMutation({
@@ -479,10 +668,6 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
     onError: (e: Error) => setError(e.message),
   })
 
-  const canSave = draft.type === 'journal'
-    ? journalBalanced
-    : !!draft.narration && !!draft.amountRupees && parseFloat(draft.amountRupees) > 0
-
   const title = isEdit ? `Edit — ${editTxn?.number}` : 'New Transaction'
 
   return (
@@ -551,6 +736,35 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
               />
             </div>
 
+            {/* From account — always visible, in tab order after Date */}
+            <AccountCombobox
+              label={FROM_LABEL[draft.type]}
+              tooltip={FROM_TOOLTIP[draft.type]}
+              value={draft.fromAccountId}
+              onChange={id => {
+                set('fromAccountId', id)
+                if (id) setAccountErrors(prev => ({ ...prev, fromAccount: undefined }))
+              }}
+              accounts={accounts}
+              error={accountErrors.fromAccount}
+            />
+
+            {/* To account — always visible, in tab order after From account */}
+            <AccountCombobox
+              label={TO_LABEL[draft.type]}
+              tooltip={TO_TOOLTIP[draft.type]}
+              value={draft.toAccountId}
+              onChange={id => {
+                set('toAccountId', id)
+                if (id) setAccountErrors(prev => ({ ...prev, toAccount: undefined }))
+              }}
+              accounts={accounts}
+              error={accountErrors.toAccount}
+            />
+
+            {/* Tags — always visible, after To account */}
+            <TagsInput tags={draft.tags} onChange={t => set('tags', t)} />
+
             {/* More details toggle */}
             {!isEdit && (
               <button
@@ -558,34 +772,21 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
                 onClick={() => setMoreOpen(o => !o)}
                 className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
               >
-                <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${moreOpen ? 'rotate-180' : ''}`} />
+                {moreOpen
+                  ? <ChevronUp className="w-4 h-4" />
+                  : <ChevronDown className="w-4 h-4" />
+                }
                 {moreOpen ? 'Less details' : 'More details'}
               </button>
             )}
 
-            {/* More details panel */}
+            {/* More details panel — attachment & repeats */}
             <div
               className="grid transition-all duration-280 ease-in-out"
               style={{ gridTemplateRows: moreOpen ? '1fr' : '0fr' }}
             >
               <div className="overflow-hidden">
                 <div className="space-y-4 pb-1">
-                  <AccountSelect
-                    label={FROM_LABEL[draft.type]}
-                    tooltip={FROM_TOOLTIP[draft.type]}
-                    value={draft.fromAccountId}
-                    onChange={id => set('fromAccountId', id)}
-                    accounts={accounts}
-                  />
-                  <AccountSelect
-                    label={TO_LABEL[draft.type]}
-                    tooltip={TO_TOOLTIP[draft.type]}
-                    value={draft.toAccountId}
-                    onChange={id => set('toAccountId', id)}
-                    accounts={accounts}
-                  />
-                  <TagsInput tags={draft.tags} onChange={t => set('tags', t)} />
-
                   {/* Attachment */}
                   <div>
                     <FieldLabel>Attachment</FieldLabel>
@@ -715,7 +916,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
           )}
           <button
             type="button"
-            onClick={() => saveMutation.mutate()}
+            onClick={handleSave}
             disabled={!canSave || saveMutation.isPending || !activeFy}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
           >
