@@ -7,17 +7,17 @@ from pathlib import Path
 _CONFIG_PATH = Path.home() / ".stow" / "config"
 
 
+def normalize_base_url(url: str) -> str:
+    """Rewrite localhost/127.0.0.1 → host.docker.internal so the Docker-hosted backend can reach host services."""
+    return url.replace("://localhost", "://host.docker.internal").replace("://127.0.0.1", "://host.docker.internal")
+
+
 def read_config() -> dict:
-    base_url = os.environ.get("STOW_LLM_BASE_URL", "")
-    model = os.environ.get("STOW_LLM_MODEL", "")
-    api_key = os.environ.get("STOW_LLM_API_KEY", "")
-
-    if not (base_url and model):
-        file_cfg = _read_file()
-        base_url = base_url or file_cfg.get("base_url", "")
-        model = model or file_cfg.get("model", "")
-        api_key = api_key or file_cfg.get("api_key", "")
-
+    # File config (written by UI) takes precedence; env vars are fallback defaults.
+    file_cfg = _read_file()
+    base_url = file_cfg.get("base_url") or os.environ.get("STOW_LLM_BASE_URL", "")
+    model = file_cfg.get("model") or os.environ.get("STOW_LLM_MODEL", "")
+    api_key = file_cfg.get("api_key") or os.environ.get("STOW_LLM_API_KEY", "")
     return {"base_url": base_url, "model": model, "api_key": api_key}
 
 

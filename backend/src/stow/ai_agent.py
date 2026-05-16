@@ -8,7 +8,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from stow.ai_config import read_config
+from stow.ai_config import read_config, normalize_base_url
 
 
 class ParsedTransaction(BaseModel):
@@ -35,11 +35,11 @@ def build_agent() -> Agent:
     model = OpenAIChatModel(
         cfg["model"] or "default",
         provider=OpenAIProvider(
-            base_url=cfg["base_url"] or "http://localhost:11434/v1",
+            base_url=normalize_base_url(cfg["base_url"]) if cfg["base_url"] else "http://localhost:11434/v1",
             api_key=cfg.get("api_key") or "not-needed",
         ),
     )
-    return Agent(model, result_type=ParsedTransaction, system_prompt=_SYSTEM_PROMPT)
+    return Agent(model, output_type=ParsedTransaction, system_prompt=_SYSTEM_PROMPT)
 
 
 def get_ai_agent() -> Agent:

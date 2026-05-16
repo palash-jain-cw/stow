@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from sqlmodel import Session, select
 
-from stow.ai_config import read_config, write_config
+from stow.ai_config import read_config, write_config, normalize_base_url
 from stow.ai_agent import get_ai_agent, ParsedTransaction
 from stow.db import get_session
 from stow.models import Account, Transaction
@@ -51,14 +51,35 @@ def post_config(body: ConfigIn):
     return ConfigOut(base_url=cfg["base_url"], model=cfg["model"])
 
 
+class TestConnectionIn(BaseModel):
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+
 @router.post("/test-connection", response_model=ConnectionResult)
-async def test_connection(agent: Agent = Depends(get_ai_agent)):
-    cfg = read_config()
+async def test_connection(body: TestConnectionIn = TestConnectionIn()):
+    saved = read_config()
+    base_url = body.base_url or saved["base_url"]
+    model = body.model or saved["model"]
+    api_key = body.api_key or saved.get("api_key", "")
     try:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+        from pydantic_ai import Agent
+        effective_url = normalize_base_url(base_url) if base_url else "http://localhost:11434/v1"
+        ai_model = OpenAIChatModel(
+            model or "default",
+            provider=OpenAIProvider(
+                base_url=effective_url,
+                api_key=api_key or "not-needed",
+            ),
+        )
+        agent = Agent(ai_model)
         start = time.monotonic()
         await agent.run("ping")
         latency_ms = (time.monotonic() - start) * 1000
-        return ConnectionResult(ok=True, model=cfg["model"], latency_ms=round(latency_ms, 1))
+        return ConnectionResult(ok=True, model=model, latency_ms=round(latency_ms, 1))
     except Exception as exc:
         return ConnectionResult(ok=False, error=str(exc))
 
@@ -88,4 +109,4 @@ async def parse_transaction(
     )
 
     result = await agent.run(user_prompt)
-    return result.data
+    return result.output
