@@ -34,6 +34,7 @@ export const queryKeys = {
     list: () => ['accounts'] as const,
     detail: (id: string) => ['accounts', id] as const,
     ledger: (id: string) => ['accounts', id, 'ledger'] as const,
+    openingBalance: (id: number) => ['accounts', id, 'opening-balance'] as const,
   },
   accountGroups: {
     all: () => ['account-groups'] as const,

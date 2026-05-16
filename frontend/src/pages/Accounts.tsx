@@ -1,3 +1,391 @@
+import { useState, useMemo } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { Plus, Search, ChevronDown, Layers, ExternalLink, Pencil, Archive, ArchiveRestore } from 'lucide-react'
+import { api, queryKeys } from '../api/api'
+import { MonoAmount } from '../components/MonoAmount'
+import { EmptyState } from '../components/EmptyState'
+import { AccountSheet } from '../components/AccountSheet'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface AccountGroup {
+  id: number
+  name: string
+  nature: string
+  parent_id: number | null
+  sort_order: number
+  cash_flow_tag: string | null
+}
+
+interface AccountOut {
+  id: number
+  name: string
+  group_id: number
+  group_name: string
+  nature: string
+  is_archived: boolean
+  investment_subtype: string | null
+  depreciation_rate: number | null
+  accumulated_depreciation_account_id: number | null
+  price_source_id: string | null
+  currency: string
+  balance: number
+}
+
+interface FinancialYear {
+  id: number
+  start_date: string
+  end_date: string
+  status: string
+}
+
+interface OpeningBalance {
+  account_id: number
+  fy_id: number
+  amount: number
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const NATURE_CHIP: Record<string, { bg: string; text: string }> = {
+  asset:     { bg: 'bg-blue-100',    text: 'text-blue-600' },
+  liability: { bg: 'bg-rose-100',    text: 'text-rose-600' },
+  equity:    { bg: 'bg-violet-100',  text: 'text-violet-600' },
+  income:    { bg: 'bg-emerald-100', text: 'text-emerald-600' },
+  expense:   { bg: 'bg-red-100',     text: 'text-red-600' },
+}
+
+const INV_LABEL: Record<string, string> = {
+  equity_mf: 'MF',
+  stock: 'STK',
+  fd: 'FD',
+  ppf: 'PPF',
+}
+
+function AvatarChip({ name, nature, size = 'sm' }: { name: string; nature: string; size?: 'sm' | 'lg' }) {
+  const colors = NATURE_CHIP[nature] ?? { bg: 'bg-zinc-100', text: 'text-zinc-500' }
+  const dim = size === 'lg' ? 'w-10 h-10 text-base rounded-xl' : 'w-5 h-5 text-xs rounded-full'
+  return (
+    <div className={`${dim} ${colors.bg} flex items-center justify-center shrink-0 font-bold ${colors.text}`}>
+      {name.charAt(0).toUpperCase()}
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function Accounts() {
-  return <h1>Accounts</h1>
+  const qc = useQueryClient()
+
+  const { data: groups = [] } = useQuery<AccountGroup[]>({
+    queryKey: queryKeys.accountGroups.all(),
+    queryFn: () => api.get('/account-groups'),
+  })
+
+  const { data: accounts = [] } = useQuery<AccountOut[]>({
+    queryKey: queryKeys.accounts.list(),
+    queryFn: () => api.get('/accounts'),
+  })
+
+  const { data: fys = [] } = useQuery<FinancialYear[]>({
+    queryKey: queryKeys.financialYears.all(),
+    queryFn: () => api.get('/financial-years'),
+  })
+
+  const activeFy = fys.find(fy => fy.status === 'active')
+
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [search, setSearch] = useState('')
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
+  const [sheetAccount, setSheetAccount] = useState<AccountOut | undefined | null>(null)  // null=closed, undefined=new, AccountOut=edit
+  const [archiveConfirm, setArchiveConfirm] = useState(false)
+
+  const selectedAccount = accounts.find(a => a.id === selectedId) ?? null
+
+  // Opening balance (lazy — only when account selected and activeFy known)
+  const { data: openingBalance } = useQuery<OpeningBalance>({
+    queryKey: queryKeys.accounts.openingBalance(selectedId ?? 0),
+    queryFn: () => api.get(`/accounts/${selectedId}/opening-balance?fy_id=${activeFy!.id}`),
+    enabled: selectedId != null && activeFy != null,
+  })
+
+  // Archive / unarchive mutation
+  const archiveMutation = useMutation({
+    mutationFn: (account: AccountOut) =>
+      api.post(`/accounts/${account.id}/${account.is_archived ? 'unarchive' : 'archive'}`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+      setArchiveConfirm(false)
+    },
+  })
+
+  // Grouped + filtered accounts
+  const groupedAccounts = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const sorted = [...groups].sort((a, b) => a.sort_order - b.sort_order)
+    return sorted.map(group => ({
+      group,
+      accounts: accounts.filter(a =>
+        a.group_id === group.id &&
+        (!q || a.name.toLowerCase().includes(q))
+      ),
+    }))
+  }, [groups, accounts, search])
+
+  function toggleCollapse(groupId: number) {
+    setCollapsed(prev => ({ ...prev, [groupId]: !prev[groupId] }))
+  }
+
+  function handleSelectAccount(id: number) {
+    if (selectedId === id) return
+    setSelectedId(id)
+    setArchiveConfirm(false)
+  }
+
+  const selectedGroup = groups.find(g => g.id === selectedAccount?.group_id)
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <header className="h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+        <h1 className="text-base font-semibold text-zinc-900">Accounts</h1>
+        <button
+          onClick={() => setSheetAccount(undefined)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          New Account
+        </button>
+      </header>
+
+      {/* Two-panel body */}
+      <div className="flex-1 flex overflow-hidden">
+
+        {/* Left: group tree */}
+        <div className="w-72 shrink-0 bg-white border-r border-zinc-200 flex flex-col overflow-hidden">
+          {/* Search */}
+          <div className="px-3 py-3 border-b border-zinc-100 shrink-0">
+            <div className="relative">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search accounts…"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+              />
+            </div>
+          </div>
+
+          {/* Tree */}
+          <div className="flex-1 overflow-y-auto py-2">
+            {groupedAccounts.map(({ group, accounts: groupAccounts }) => {
+              const isCollapsed = collapsed[group.id] ?? false
+              return (
+                <div key={group.id}>
+                  <button
+                    onClick={() => toggleCollapse(group.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 transition-colors"
+                  >
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+                    />
+                    <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{group.name}</span>
+                  </button>
+
+                  {!isCollapsed && groupAccounts.length > 0 && (
+                    <div>
+                      {groupAccounts.map(account => (
+                        <button
+                          key={account.id}
+                          onClick={() => handleSelectAccount(account.id)}
+                          className={`w-full flex items-center justify-between pl-8 pr-3 py-2 text-left transition-colors ${
+                            selectedId === account.id
+                              ? 'bg-blue-50'
+                              : 'hover:bg-zinc-50'
+                          } ${account.is_archived ? 'opacity-50' : ''}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <AvatarChip name={account.name} nature={account.nature} />
+                            <span className="text-sm text-zinc-800 truncate">{account.name}</span>
+                          </div>
+                          {account.investment_subtype ? (
+                            <span className="font-mono text-xs text-cyan-600 shrink-0 ml-2">
+                              {INV_LABEL[account.investment_subtype] ?? account.investment_subtype}
+                            </span>
+                          ) : (
+                            <MonoAmount amount={account.balance} colored={false} className="text-xs text-zinc-500 shrink-0 ml-2" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Right: detail pane */}
+        <div className="flex-1 overflow-y-auto">
+          {selectedAccount == null ? (
+            <div className="flex flex-col items-center justify-center h-full">
+              <EmptyState
+                icon={Layers}
+                heading="Pick an account to see its story."
+                subtext="Or start fresh with a new one."
+              />
+              <button
+                onClick={() => setSheetAccount(undefined)}
+                className="mt-4 flex items-center gap-2 border border-zinc-200 hover:border-zinc-300 text-zinc-600 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                New Account
+              </button>
+            </div>
+          ) : (
+            <div className="p-8 max-w-lg">
+              {/* Account header */}
+              <div className="flex items-center gap-3 mb-6">
+                <AvatarChip name={selectedAccount.name} nature={selectedAccount.nature} size="lg" />
+                <div>
+                  <h2 className="text-lg font-semibold text-zinc-900">{selectedAccount.name}</h2>
+                  <span className="text-xs text-zinc-400">
+                    {selectedAccount.group_name} · {selectedAccount.nature}
+                    {selectedAccount.is_archived && ' · archived'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div className="grid grid-cols-2 gap-3 mb-6">
+                <div className="bg-zinc-50 rounded-xl p-4">
+                  <p className="text-xs text-zinc-400 mb-1">Current balance</p>
+                  <MonoAmount amount={selectedAccount.balance} className="text-xl font-bold" />
+                </div>
+                <div className="bg-zinc-50 rounded-xl p-4">
+                  <p className="text-xs text-zinc-400 mb-1">Transactions</p>
+                  <Link
+                    to={`/transactions?account_id=${selectedAccount.id}`}
+                    className="flex items-center gap-1.5 text-blue-600 hover:text-blue-700 font-mono text-sm font-bold"
+                  >
+                    View all <ExternalLink className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
+
+              {/* Detail rows */}
+              <div className="space-y-0 mb-6">
+                {selectedGroup?.cash_flow_tag && (
+                  <DetailRow label="Cash flow tag" value={
+                    <span className="text-sm font-medium text-zinc-800 capitalize">{selectedGroup.cash_flow_tag}</span>
+                  } />
+                )}
+                {openingBalance != null && (
+                  <DetailRow label="Opening balance" value={
+                    <MonoAmount amount={openingBalance.amount} colored={false} className="text-sm font-medium text-zinc-800" />
+                  } />
+                )}
+                {activeFy && (
+                  <DetailRow label="FY opened" value={
+                    <span className="text-sm font-medium text-zinc-800">
+                      {new Date(activeFy.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </span>
+                  } />
+                )}
+                {selectedAccount.depreciation_rate != null && (
+                  <DetailRow label="Depreciation rate" value={
+                    <span className="text-sm font-medium text-zinc-800">{selectedAccount.depreciation_rate}% (WDV)</span>
+                  } />
+                )}
+                {selectedAccount.investment_subtype && (
+                  <DetailRow label="Investment type" value={
+                    <span className="text-sm font-medium text-cyan-700">
+                      {INV_LABEL[selectedAccount.investment_subtype] ?? selectedAccount.investment_subtype}
+                      {selectedAccount.price_source_id && ` · ${selectedAccount.price_source_id}`}
+                    </span>
+                  } />
+                )}
+              </div>
+
+              {/* Actions or archive confirm */}
+              {archiveConfirm ? (
+                <div className="rounded-xl border border-zinc-200 p-4 space-y-3">
+                  <p className="text-sm text-zinc-700">
+                    {selectedAccount.is_archived
+                      ? `Unarchive "${selectedAccount.name}"? It will reappear in entry sheets.`
+                      : `Archive "${selectedAccount.name}"? Archived accounts are hidden from entry sheets but their history is preserved.`
+                    }
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setArchiveConfirm(false)}
+                      className="text-sm text-zinc-400 hover:text-zinc-600 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => archiveMutation.mutate(selectedAccount)}
+                      disabled={archiveMutation.isPending}
+                      className="text-sm font-medium text-red-600 hover:text-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {archiveMutation.isPending ? 'Working…' : selectedAccount.is_archived ? 'Unarchive' : 'Archive'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <Link
+                    to={`/transactions?account_id=${selectedAccount.id}`}
+                    className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View transactions
+                  </Link>
+                  <button
+                    onClick={() => setSheetAccount(selectedAccount)}
+                    className="flex items-center gap-2 text-sm text-zinc-600 hover:text-zinc-800 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Edit account
+                  </button>
+                  <button
+                    onClick={() => setArchiveConfirm(true)}
+                    className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-600 transition-colors"
+                  >
+                    {selectedAccount.is_archived
+                      ? <><ArchiveRestore className="w-4 h-4" /> Unarchive account</>
+                      : <><Archive className="w-4 h-4" /> Archive account</>
+                    }
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* New / Edit sheet */}
+      <AccountSheet
+        open={sheetAccount !== null}
+        onClose={() => setSheetAccount(null)}
+        account={sheetAccount === undefined ? undefined : sheetAccount ?? undefined}
+        groups={groups}
+        activeFyId={activeFy?.id}
+        onSaved={() => {
+          setSheetAccount(null)
+        }}
+      />
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-zinc-100">
+      <span className="text-sm text-zinc-500">{label}</span>
+      {value}
+    </div>
+  )
 }
