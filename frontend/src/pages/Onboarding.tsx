@@ -365,7 +365,7 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
     setConnStatus('loading')
     setConnMsg('Testing…')
     try {
-      const result = await api.post<AiConnectionResult>('/ai/test-connection', {})
+      const result = await api.post<AiConnectionResult>('/ai/test-connection', { base_url: baseUrl, model, api_key: apiKey })
       if (result.ok) {
         setConnStatus('ok')
         setConnMsg(`Connected · ${result.model ?? model} · ${result.latency_ms}ms`)

@@ -732,7 +732,7 @@ function AiPanel() {
     setConnStatus('loading')
     setConnMsg('Testing…')
     try {
-      const result = await api.post<ConnectionResult>('/ai/test-connection', {})
+      const result = await api.post<ConnectionResult>('/ai/test-connection', { base_url: baseUrl, model, api_key: apiKey })
       if (result.ok) {
         setConnStatus('ok')
         setConnMsg(`Connected · ${result.model ?? model} · ${result.latency_ms}ms`)
