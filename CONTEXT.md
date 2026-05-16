@@ -189,6 +189,94 @@ All reports are generated server-side and exportable as PDF.
 - Configured via `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL` environment variables
 - No external API calls — all inference is on-device
 
+## Telegram Bot
+
+The Telegram bot provides natural-language accounting via the same backend. It complements the web app — quick interactions via bot, deep work via web.
+
+### Design Decisions
+
+| Decision | Choice |
+|---|---|
+| Scope | Complements web app — no need to replicate full web UX in bot |
+| User model | Single user, simple `telegram_user_id` → `user_id` mapping on `/start` |
+| Setup | Simple `/start` mapping — no auth flow needed |
+| Interaction | Hybrid — free text for daily use, slash commands for specific workflows (`/import`, `/recurring`) |
+| Parsing | Single centralized LLM call handles all extraction (amount, type, accounts, date, counterparty) |
+| Confirmation | Always show proposal card, never auto-post |
+| Editing | Inline keyboard with tapable field buttons (account, date, amount) |
+| Account selection | Learns counterparty→account pairings, pre-fills, shows top 3-5 for override |
+| Query responses | One-line answer by default, [breakdown] and [report] buttons for detail |
+| Screenshots | New `POST /ai/process-image` endpoint using LLM vision capability |
+| Bank import | Auto-confirm all staging rows except `possible_duplicate=True` flagged rows |
+| Recurring | Daily digest at fixed time, individual [Confirm] [Skip] buttons per item |
+| Architecture | Same FastAPI process, shared DB session, uses existing background scheduler |
+| State management | In-memory dict keyed by `telegram_user_id`, TTL 10 minutes |
+| Error handling | 3 retries with exponential backoff on transient errors, user-friendly messages on failure |
+| Financial year | Always checks active FY from backend — no stale state |
+| Bot framework | `aiogram 3.x` — async-native, integrates with FastAPI ecosystem |
+| AI infrastructure | Reuses existing `pydantic_ai` agent — same LLM provider, same config |
+
+### Bot Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **Proposal Card** | A scannable summary of the parsed transaction shown before posting — amount, type, accounts, date, narration |
+| **Staging Row** | A parsed bank statement line awaiting confirmation — same as web app's staging area |
+| **Daily Digest** | A single message listing all recurring transactions due today, with individual [Confirm] [Skip] buttons |
+| **Counterparty** | The entity on the other side of a transaction (merchant, person, bank) — extracted from text, UPI ID, or image |
+
+### Bot State Machine
+
+```
+idle → parsing → reviewing → editing → confirming → posted
+                          ↓
+                    editing (loop back to reviewing)
+                    editing (cancel → idle)
+```
+
+- State stored in-memory, keyed by `telegram_user_id`
+- TTL: 10 minutes of inactivity
+- On timeout or restart: state is lost, user starts fresh
+
+### Key Endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/ai/parse-transaction` | POST | Parse natural language → transaction |
+| `/ai/process-image` | POST | Process UPI screenshot → extracted fields |
+| `/ai/test-connection` | POST | Check LLM connectivity |
+| `/financial-years` | GET | Get active FY |
+| `/accounts` | GET | Get all active accounts |
+| `/transactions` | POST | Create transaction |
+| `/imports/staging` | GET | Get staging rows |
+| `/imports/staging/{id}/confirm` | POST | Confirm staging row |
+| `/recurring/queue` | GET | Get today's due queue |
+
+### File Structure
+
+```
+backend/src/stow/
+├── telegram_bot/
+│   ├── __init__.py          # Bot initialization, dispatcher
+│   ├── bot.py               # aiogram Bot instance, long-polling setup
+│   ├── router.py            # Intent classification (entry/query/import/investment/other)
+│   ├── state.py             # In-memory state machine (BotState class, TTL)
+│   ├── handlers/
+│   │   ├── start.py         # /start handler — map telegram_user_id → user_id
+│   │   ├── text.py          # Free text handler — parse → propose → confirm
+│   │   ├── image.py         # Image handler — forward image → vision extract → propose
+│   │   ├── edit.py          # Inline keyboard edit handler — field selection, value update
+│   │   ├── import_handler.py # /import handler — upload PDF → parse → auto-confirm
+│   │   ├── recurring.py     # /recurring handler — daily digest, confirm/skip
+│   │   └── query.py         # Query handler — one-line answer, breakdown/report buttons
+│   ├── proposals.py         # Proposal card builder — format transaction for display
+│   ├── keyboards.py         # Inline keyboard builders — edit buttons, confirm/edit/decline
+│   ├── queries.py           # Backend query helpers — fetch accounts, FY, recent txns
+│   └── utils.py             # Shared utilities — retry logic, formatting
+├── routers/
+│   └── ai.py                # New: POST /ai/process-image endpoint
+```
+
 ## Technology Stack
 
 | Layer | Choice |
@@ -202,6 +290,7 @@ All reports are generated server-side and exportable as PDF.
 | PDF export | WeasyPrint or ReportLab |
 | PDF parsing | pdfplumber or pymupdf |
 | Deployment | Docker Compose (local machine) |
+| Telegram Bot | aiogram 3.x (async-native, same FastAPI process) |
 
 ## Project Structure
 
