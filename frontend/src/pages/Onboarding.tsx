@@ -356,6 +356,7 @@ type ConnStatus = 'idle' | 'loading' | 'ok' | 'fail'
 function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: () => void }) {
   const [baseUrl, setBaseUrl] = useState('http://localhost:11434/v1')
   const [model, setModel] = useState('qwen3:30b')
+  const [apiKey, setApiKey] = useState('')
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
   const [connMsg, setConnMsg] = useState('Not tested')
   const [saving, setSaving] = useState(false)
@@ -381,7 +382,7 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
   const handleSave = async () => {
     setSaving(true)
     try {
-      await api.post('/ai/config', { base_url: baseUrl, model, api_key: '' })
+      await api.post('/ai/config', { base_url: baseUrl, model, api_key: apiKey })
       onNext(model)
     } finally {
       setSaving(false)
@@ -423,6 +424,18 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
             onChange={e => setModel(e.target.value)}
           />
           <p className="text-xs text-zinc-400 mt-1">Must support function calling. Qwen3, Llama 3.1+, Mistral v0.3+ all work.</p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">
+            API key <span className="text-zinc-400 font-normal">(optional — leave blank for Ollama)</span>
+          </label>
+          <input
+            type="password"
+            className="w-full border border-zinc-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            placeholder="sk-..."
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+          />
         </div>
 
         <div className="flex items-center gap-3">

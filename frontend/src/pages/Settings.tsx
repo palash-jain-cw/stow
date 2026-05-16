@@ -714,6 +714,7 @@ function AiPanel() {
 
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
   const [connMsg, setConnMsg] = useState('Not tested')
   const [saveLabel, setSaveLabel] = useState('Save')
@@ -724,6 +725,7 @@ function AiPanel() {
     setBaseUrl(config.base_url)
     setModel(config.model)
     populated.current = true
+    // api_key is write-only — backend doesn't return it, leave blank for user to re-enter if needed
   }
 
   const testConnection = async () => {
@@ -745,7 +747,7 @@ function AiPanel() {
   }
 
   const save = async () => {
-    await api.post('/ai/config', { base_url: baseUrl, model, api_key: '' })
+    await api.post('/ai/config', { base_url: baseUrl, model, api_key: apiKey })
     qc.invalidateQueries({ queryKey: queryKeys.ai.config() })
     setSaveLabel('Saved')
     setTimeout(() => setSaveLabel('Save'), 1800)
@@ -789,6 +791,19 @@ function AiPanel() {
             onChange={e => setModel(e.target.value)}
           />
           <p className="text-xs text-zinc-400 mt-1">Must support function calling. Qwen3, Llama 3.1+, Mistral v0.3+ all work.</p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">
+            API key <span className="text-zinc-400 font-normal">(optional — leave blank for Ollama)</span>
+          </label>
+          <input
+            type="password"
+            className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            placeholder="sk-..."
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+          />
         </div>
 
         <div className="flex items-center gap-4">
