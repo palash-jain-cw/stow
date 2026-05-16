@@ -17,6 +17,7 @@ dependencies = [
     "pydantic-ai>=0.0.14",
     "tomli-w>=1.1",
     "pdfplumber>=0.11",
+    "subagents-pydantic-ai>=0.2.2",
 ]
 
 [dependency-groups]

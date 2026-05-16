@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import os
 import tomllib
 import tomli_w
 from pathlib import Path
+from typing import Any
 
 
 _CONFIG_PATH = Path.home() / ".stow" / "config"
@@ -33,6 +36,19 @@ def write_config(base_url: str, model: str, api_key: str = "") -> None:
         data["api_key"] = api_key
     with open(_CONFIG_PATH, "wb") as f:
         tomli_w.dump({"llm": data}, f)
+
+
+def build_model() -> Any:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    cfg = read_config()
+    return OpenAIChatModel(
+        cfg["model"] or "default",
+        provider=OpenAIProvider(
+            base_url=normalize_base_url(cfg["base_url"]) if cfg["base_url"] else "http://localhost:11434/v1",
+            api_key=cfg.get("api_key") or "not-needed",
+        ),
+    )
 
 
 def _read_file() -> dict:

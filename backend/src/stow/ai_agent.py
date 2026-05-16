@@ -5,10 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
 
-from stow.ai_config import read_config, normalize_base_url
+from stow.ai_config import build_model
 
 
 class ParsedTransaction(BaseModel):
@@ -31,15 +29,7 @@ Respond only with valid JSON matching the required schema.
 
 
 def build_agent() -> Agent:
-    cfg = read_config()
-    model = OpenAIChatModel(
-        cfg["model"] or "default",
-        provider=OpenAIProvider(
-            base_url=normalize_base_url(cfg["base_url"]) if cfg["base_url"] else "http://localhost:11434/v1",
-            api_key=cfg.get("api_key") or "not-needed",
-        ),
-    )
-    return Agent(model, output_type=ParsedTransaction, system_prompt=_SYSTEM_PROMPT)
+    return Agent(build_model(), output_type=ParsedTransaction, system_prompt=_SYSTEM_PROMPT)
 
 
 def get_ai_agent() -> Agent:
