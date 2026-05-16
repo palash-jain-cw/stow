@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, Search, ChevronDown, Layers, ExternalLink, Pencil, Archive, ArchiveRestore } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
@@ -46,6 +46,19 @@ interface OpeningBalance {
   amount: number
 }
 
+interface LedgerRow {
+  transaction_id: number
+  date: string
+  narration: string
+  amount: number
+  running_balance: number
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const DEFAULT_GROUPS = ['Bank Accounts', 'Cash-in-Hand']
+const SEE_MORE_KEY = 'stow.accounts.seeMore'
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const NATURE_CHIP: Record<string, { bg: string; text: string }> = {
@@ -77,6 +90,7 @@ function AvatarChip({ name, nature, size = 'sm' }: { name: string; nature: strin
 
 export default function Accounts() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const { data: groups = [] } = useQuery<AccountGroup[]>({
     queryKey: queryKeys.accountGroups.all(),
@@ -95,11 +109,35 @@ export default function Accounts() {
 
   const activeFy = fys.find(fy => fy.status === 'active')
 
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  // Selected account via URL param
+  const selectedIdParam = searchParams.get('account')
+  const selectedId = selectedIdParam != null ? Number(selectedIdParam) : null
+
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
   const [sheetAccount, setSheetAccount] = useState<AccountOut | undefined | null>(null)  // null=closed, undefined=new, AccountOut=edit
   const [archiveConfirm, setArchiveConfirm] = useState(false)
+
+  // "See more" state persisted in localStorage
+  const [seeMore, setSeeMore] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SEE_MORE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  function toggleSeeMore() {
+    setSeeMore(prev => {
+      const next = !prev
+      try {
+        localStorage.setItem(SEE_MORE_KEY, String(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   const selectedAccount = accounts.find(a => a.id === selectedId) ?? null
 
@@ -108,6 +146,13 @@ export default function Accounts() {
     queryKey: queryKeys.accounts.openingBalance(selectedId ?? 0),
     queryFn: () => api.get(`/accounts/${selectedId}/opening-balance?fy_id=${activeFy!.id}`),
     enabled: selectedId != null && activeFy != null,
+  })
+
+  // Ledger for selected account
+  const { data: ledgerRows = [], isLoading: ledgerLoading } = useQuery<LedgerRow[]>({
+    queryKey: queryKeys.accounts.ledger(String(selectedId)),
+    queryFn: () => api.get(`/accounts/${selectedId}/ledger`),
+    enabled: selectedId != null,
   })
 
   // Archive / unarchive mutation
@@ -130,16 +175,25 @@ export default function Accounts() {
         a.group_id === group.id &&
         (!q || a.name.toLowerCase().includes(q))
       ),
+      isDefault: DEFAULT_GROUPS.includes(group.name),
     }))
   }, [groups, accounts, search])
+
+  // Split into default-visible and hidden groups
+  const visibleGroups = seeMore
+    ? groupedAccounts
+    : groupedAccounts.filter(({ isDefault }) => isDefault)
 
   function toggleCollapse(groupId: number) {
     setCollapsed(prev => ({ ...prev, [groupId]: !prev[groupId] }))
   }
 
   function handleSelectAccount(id: number) {
-    if (selectedId === id) return
-    setSelectedId(id)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('account', String(id))
+      return next
+    })
     setArchiveConfirm(false)
   }
 
@@ -179,55 +233,67 @@ export default function Accounts() {
           </div>
 
           {/* Tree */}
-          <div className="flex-1 overflow-y-auto py-2">
-            {groupedAccounts.map(({ group, accounts: groupAccounts }) => {
-              const isCollapsed = collapsed[group.id] ?? false
-              return (
-                <div key={group.id}>
-                  <button
-                    onClick={() => toggleCollapse(group.id)}
-                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 transition-colors"
-                  >
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
-                    />
-                    <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{group.name}</span>
-                  </button>
+          <div className="flex-1 overflow-y-auto py-2 flex flex-col">
+            <div className="flex-1">
+              {visibleGroups.map(({ group, accounts: groupAccounts }) => {
+                const isCollapsed = collapsed[group.id] ?? false
+                return (
+                  <div key={group.id}>
+                    <button
+                      onClick={() => toggleCollapse(group.id)}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-50 transition-colors"
+                    >
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 text-zinc-400 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`}
+                      />
+                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{group.name}</span>
+                    </button>
 
-                  {!isCollapsed && groupAccounts.length > 0 && (
-                    <div>
-                      {groupAccounts.map(account => (
-                        <button
-                          key={account.id}
-                          onClick={() => handleSelectAccount(account.id)}
-                          className={`w-full flex items-center justify-between pl-8 pr-3 py-2 text-left transition-colors ${
-                            selectedId === account.id
-                              ? 'bg-blue-50'
-                              : 'hover:bg-zinc-50'
-                          } ${account.is_archived ? 'opacity-50' : ''}`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <AvatarChip name={account.name} nature={account.nature} />
-                            <span className="text-sm text-zinc-800 truncate">{account.name}</span>
-                          </div>
-                          {account.investment_subtype ? (
-                            <span className="font-mono text-xs text-cyan-600 shrink-0 ml-2">
-                              {INV_LABEL[account.investment_subtype] ?? account.investment_subtype}
-                            </span>
-                          ) : (
-                            <MonoAmount amount={account.balance} colored={false} className="text-xs text-zinc-500 shrink-0 ml-2" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+                    {!isCollapsed && groupAccounts.length > 0 && (
+                      <div>
+                        {groupAccounts.map(account => (
+                          <button
+                            key={account.id}
+                            onClick={() => handleSelectAccount(account.id)}
+                            className={`w-full flex items-center justify-between pl-8 pr-3 py-2 text-left transition-colors ${
+                              selectedId === account.id
+                                ? 'bg-blue-50'
+                                : 'hover:bg-zinc-50'
+                            } ${account.is_archived ? 'opacity-50' : ''}`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <AvatarChip name={account.name} nature={account.nature} />
+                              <span className="text-sm text-zinc-800 truncate">{account.name}</span>
+                            </div>
+                            {account.investment_subtype ? (
+                              <span className="font-mono text-xs text-cyan-600 shrink-0 ml-2">
+                                {INV_LABEL[account.investment_subtype] ?? account.investment_subtype}
+                              </span>
+                            ) : (
+                              <MonoAmount amount={account.balance} colored={false} className="text-xs text-zinc-500 shrink-0 ml-2" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* See more / See less toggle */}
+            <div className="px-3 py-2 border-t border-zinc-100 shrink-0">
+              <button
+                onClick={toggleSeeMore}
+                className="text-xs text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              >
+                {seeMore ? 'See less' : 'See more'}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Right: detail pane */}
+        {/* Right: detail / ledger pane */}
         <div className="flex-1 overflow-y-auto">
           {selectedAccount == null ? (
             <div className="flex flex-col items-center justify-center h-full">
@@ -245,73 +311,51 @@ export default function Accounts() {
               </button>
             </div>
           ) : (
-            <div className="p-8 max-w-lg">
+            <div className="p-6">
               {/* Account header */}
-              <div className="flex items-center gap-3 mb-6">
-                <AvatarChip name={selectedAccount.name} nature={selectedAccount.nature} size="lg" />
-                <div>
-                  <h2 className="text-lg font-semibold text-zinc-900">{selectedAccount.name}</h2>
-                  <span className="text-xs text-zinc-400">
-                    {selectedAccount.group_name} · {selectedAccount.nature}
-                    {selectedAccount.is_archived && ' · archived'}
-                  </span>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <AvatarChip name={selectedAccount.name} nature={selectedAccount.nature} size="lg" />
+                  <div>
+                    <h2 className="text-lg font-semibold text-zinc-900">{selectedAccount.name}</h2>
+                    <span className="text-xs text-zinc-400">
+                      {selectedAccount.group_name} · {selectedAccount.nature}
+                      {selectedAccount.is_archived && ' · archived'}
+                    </span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-3 mb-6">
-                <div className="bg-zinc-50 rounded-xl p-4">
-                  <p className="text-xs text-zinc-400 mb-1">Current balance</p>
-                  <MonoAmount amount={selectedAccount.balance} className="text-xl font-bold" />
-                </div>
-                <div className="bg-zinc-50 rounded-xl p-4">
-                  <p className="text-xs text-zinc-400 mb-1">Transactions</p>
+                {/* Actions */}
+                <div className="flex items-center gap-3">
                   <Link
                     to={`/transactions?account_id=${selectedAccount.id}`}
-                    className="flex items-center gap-1.5 text-blue-600 hover:text-blue-700 font-mono text-sm font-bold"
+                    className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
                   >
-                    View all <ExternalLink className="w-3.5 h-3.5" />
+                    <ExternalLink className="w-4 h-4" />
+                    Transactions
                   </Link>
+                  <button
+                    onClick={() => setSheetAccount(selectedAccount)}
+                    className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => setArchiveConfirm(v => !v)}
+                    className="flex items-center gap-1.5 text-sm text-zinc-400 hover:text-zinc-600 transition-colors"
+                  >
+                    {selectedAccount.is_archived
+                      ? <><ArchiveRestore className="w-4 h-4" /> Unarchive</>
+                      : <><Archive className="w-4 h-4" /> Archive</>
+                    }
+                  </button>
                 </div>
               </div>
 
-              {/* Detail rows */}
-              <div className="space-y-0 mb-6">
-                {selectedGroup?.cash_flow_tag && (
-                  <DetailRow label="Cash flow tag" value={
-                    <span className="text-sm font-medium text-zinc-800 capitalize">{selectedGroup.cash_flow_tag}</span>
-                  } />
-                )}
-                {openingBalance != null && (
-                  <DetailRow label="Opening balance" value={
-                    <MonoAmount amount={openingBalance.amount} colored={false} className="text-sm font-medium text-zinc-800" />
-                  } />
-                )}
-                {activeFy && (
-                  <DetailRow label="FY opened" value={
-                    <span className="text-sm font-medium text-zinc-800">
-                      {new Date(activeFy.start_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </span>
-                  } />
-                )}
-                {selectedAccount.depreciation_rate != null && (
-                  <DetailRow label="Depreciation rate" value={
-                    <span className="text-sm font-medium text-zinc-800">{selectedAccount.depreciation_rate}% (WDV)</span>
-                  } />
-                )}
-                {selectedAccount.investment_subtype && (
-                  <DetailRow label="Investment type" value={
-                    <span className="text-sm font-medium text-cyan-700">
-                      {INV_LABEL[selectedAccount.investment_subtype] ?? selectedAccount.investment_subtype}
-                      {selectedAccount.price_source_id && ` · ${selectedAccount.price_source_id}`}
-                    </span>
-                  } />
-                )}
-              </div>
-
-              {/* Actions or archive confirm */}
-              {archiveConfirm ? (
-                <div className="rounded-xl border border-zinc-200 p-4 space-y-3">
+              {/* Archive confirm banner */}
+              {archiveConfirm && (
+                <div className="rounded-xl border border-zinc-200 p-4 mb-6 space-y-3">
                   <p className="text-sm text-zinc-700">
                     {selectedAccount.is_archived
                       ? `Unarchive "${selectedAccount.name}"? It will reappear in entry sheets.`
@@ -334,33 +378,69 @@ export default function Accounts() {
                     </button>
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <Link
-                    to={`/transactions?account_id=${selectedAccount.id}`}
-                    className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    View transactions
-                  </Link>
-                  <button
-                    onClick={() => setSheetAccount(selectedAccount)}
-                    className="flex items-center gap-2 text-sm text-zinc-600 hover:text-zinc-800 transition-colors"
-                  >
-                    <Pencil className="w-4 h-4" />
-                    Edit account
-                  </button>
-                  <button
-                    onClick={() => setArchiveConfirm(true)}
-                    className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-600 transition-colors"
-                  >
-                    {selectedAccount.is_archived
-                      ? <><ArchiveRestore className="w-4 h-4" /> Unarchive account</>
-                      : <><Archive className="w-4 h-4" /> Archive account</>
-                    }
-                  </button>
-                </div>
               )}
+
+              {/* Summary stats */}
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <div className="bg-zinc-50 rounded-xl p-4">
+                  <p className="text-xs text-zinc-400 mb-1">Current balance</p>
+                  <MonoAmount amount={selectedAccount.balance} className="text-xl font-bold" />
+                </div>
+                {openingBalance != null && (
+                  <div className="bg-zinc-50 rounded-xl p-4">
+                    <p className="text-xs text-zinc-400 mb-1">Opening balance</p>
+                    <MonoAmount amount={openingBalance.amount} colored={false} className="text-xl font-bold text-zinc-800" />
+                  </div>
+                )}
+                {selectedGroup?.cash_flow_tag && (
+                  <div className="bg-zinc-50 rounded-xl p-4">
+                    <p className="text-xs text-zinc-400 mb-1">Cash flow tag</p>
+                    <span className="text-sm font-medium text-zinc-800 capitalize">{selectedGroup.cash_flow_tag}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Ledger table */}
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-700 mb-3">Ledger</h3>
+
+                {ledgerLoading ? (
+                  <div className="text-sm text-zinc-400 py-8 text-center">Loading…</div>
+                ) : ledgerRows.length === 0 ? (
+                  <div className="text-sm text-zinc-400 py-8 text-center">No transactions yet.</div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-zinc-200 bg-zinc-50">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Date</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Narration</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Counterpart</th>
+                          <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Amount</th>
+                          <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {ledgerRows.map(row => (
+                          <tr key={row.transaction_id} className="hover:bg-zinc-50 transition-colors">
+                            <td className="px-4 py-3 text-zinc-500 whitespace-nowrap font-mono text-xs">
+                              {new Date(row.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </td>
+                            <td className="px-4 py-3 text-zinc-800 max-w-xs truncate">{row.narration}</td>
+                            <td className="px-4 py-3 text-zinc-400">—</td>
+                            <td className="px-4 py-3 text-right">
+                              <MonoAmount amount={row.amount} className="text-sm" />
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <MonoAmount amount={row.running_balance} colored={false} className="text-sm text-zinc-700" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
