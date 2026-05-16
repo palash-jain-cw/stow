@@ -4,18 +4,18 @@ Data entry in Stow today requires navigating multiple web UI screens. The user w
 
 ## Solution
 
-A central pydantic_ai agent with tools, subagents, and skills that can operate the full Stow backend. The agent is exposed through two transport layers:
+A pydantic_ai orchestrator agent backed by domain-specific subagents, each with its own isolated context and focused toolset. The orchestrator is exposed through two transport layers:
 
 1. **Telegram bot** — mobile-first, always available, handles text + images + PDFs
-2. **Web chat window** — persistent chat panel in the web app, same agent, same capabilities
+2. **Web chat window** — persistent sidebar panel (right side) in the web app, same agent, same capabilities
 
 The web app itself becomes a read-heavy companion: ledger views, reports, portfolio, settings. All data entry and operations move to the agent.
 
 ### What Gets Removed
 
-- Bank import web UI page — replaced by agent's `bank_reconciler` skill
-- NL transaction entry widget — replaced by agent's `transaction_entry` skill
-- `POST /ai/process-image` REST endpoint — vision is a model capability used agent-internally, not an exposed API
+- Bank import web UI page — replaced by `import_agent` subagent
+- NL transaction entry widget — replaced by `transaction_agent` subagent
+- `POST /ai/process-image` REST endpoint — vision is a model capability used inside the orchestrator, not an exposed API
 
 ### Web UI Changes (Non-Agent)
 
@@ -89,55 +89,73 @@ The web app itself becomes a read-heavy companion: ledger views, reports, portfo
 
 ### Agent Architecture
 
-The agent is implemented with **tools** (thin wrappers over backend endpoints) and **skills** (high-level capabilities with domain logic and conversation flows).
+The system uses a two-tier pydantic_ai architecture built on [`subagents-pydantic-ai`](https://github.com/vstorm-co/subagents-pydantic-ai):
 
-#### Tools
+- **Orchestrator** — conversationalist and router. Talks directly to the user, understands intent, asks clarifying questions when needed, delegates work to subagents via `task()`, and presents subagent results back to the user as proposal cards or plain responses.
+- **Subagents** — domain executors. Each runs in its own isolated context with a focused toolset. The orchestrator only sees the subagent's final output, not its intermediate tool calls, keeping the orchestrator context lean.
+
+**Clarifying questions** are handled via the orchestrator's system prompt, not a tool. If user intent is ambiguous or required information is missing (e.g. which account, which date range), the orchestrator asks a single focused question before delegating. It does not guess.
+
+**Vision (UPI screenshots)** is handled by the orchestrator itself — it receives the image, calls the vision-capable model inline, extracts the transaction fields, then delegates to `transaction_agent` for the proposal and confirmation flow. No separate REST endpoint.
+
+#### Subagents and Their Tools
+
+**`transaction_agent`** — all transaction operations
 
 | Tool | Endpoint | Purpose |
 |------|----------|---------|
+| `parse_natural_language` | `POST /ai/parse-transaction` | Text → structured proposal |
 | `create_transaction` | `POST /transactions` | Post a double-entry transaction |
 | `list_transactions` | `GET /transactions` | Query/filter transactions |
 | `get_transaction` | `GET /transactions/{id}` | Fetch single transaction |
 | `update_transaction` | `PUT /transactions/{id}` | Edit narration/date/tags |
 | `delete_transaction` | `DELETE /transactions/{id}` | Remove a transaction |
-| `parse_natural_language` | `POST /ai/parse-transaction` | Text → structured proposal |
+
+**`account_agent`** — account lookups and management
+
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
 | `list_accounts` | `GET /accounts` | All accounts with balances |
-| `get_account` | `GET /accounts/{id}` | Single account + ledger |
+| `get_account` | `GET /accounts/{id}` | Single account + full ledger |
 | `create_account` | `POST /accounts` | Add a new ledger |
 | `archive_account` | `POST /accounts/{id}/archive` | Soft-delete an account |
-| `list_reports` | `all /reports/*` | Trial balance, P&L, balance sheet, cash flow |
+
+**`import_agent`** — bank statement import and staging review
+
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
+| `import_statement` | `POST /imports` | Upload PDF → staging batch |
+| `review_staging` | `GET /imports/{batch}/rows` | List parsed rows with status |
+| `confirm_staging` | `POST /imports/{batch}/confirm` | Post all confirmed rows |
+| `match_staging_row` | `POST /imports/{batch}/rows/{id}/match` | Match row to existing txn |
+| `update_staging_row` | `PUT /imports/{batch}/rows/{id}` | Edit row account/tags |
+
+**`report_agent`** — queries, reports, and financial year info
+
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
 | `get_financial_years` | `GET /financial-years` | Current/active FY info |
+| `list_reports` | `all /reports/*` | Trial balance, P&L, balance sheet, cash flow |
+
+**`investment_agent`** — portfolio, lots, and FDs
+
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
 | `create_fd` | `POST /investments/fds` | Create fixed deposit |
+| `list_fds` | `GET /investments/fds` | All FDs with accrued interest |
 | `buy_investment` | `POST /investments/{id}/buy` | Purchase MF/stock lot |
 | `sell_investment` | `POST /investments/{id}/sell` | Sell lots (FIFO) |
 | `get_holdings` | `GET /investments/{id}/holdings` | Current portfolio lots |
 | `get_portfolio` | `GET /investments/{id}/portfolio` | Current value + unrealized gains |
 | `get_capital_gains` | `GET /investments/{id}/capital-gains` | STCG/LTCG summary |
-| `list_fds` | `GET /investments/fds` | All FDs with accrued interest |
-| `import_statement` | `POST /imports` | Upload PDF → staging |
-| `review_staging` | `GET /imports/{batch}/rows` | Review parsed rows |
-| `confirm_staging` | `POST /imports/{batch}/confirm` | Post all confirmed rows |
-| `match_staging_row` | `POST /imports/{batch}/rows/{id}/match` | Match to existing txn |
-| `update_staging_row` | `PUT /imports/{batch}/rows/{id}` | Edit account/tags |
-| `get_recurring_due` | `GET /recurring/due-today` | Today's pending recurring |
-| `confirm_recurring` | `POST /recurring/queue/{id}/confirm` | Post a recurring |
-| `skip_recurring` | `POST /recurring/queue/{id}/skip` | Skip a recurring |
 
-#### Skills
+**`recurring_agent`** — recurring transaction queue
 
-1. **transaction_entry** — Parses free text via `parse_natural_language`, presents a proposal card, handles field-level edits, posts via `create_transaction` on confirm. Enforces: both accounts required, narration optional, active FY check, double-entry rules.
-
-2. **screenshot_parser** — Receives image (forwarded UPI screenshot), passes to vision-capable model alongside account list and merchant rules, extracts amount/date/UPI ID/merchant, maps to account, hands off to `transaction_entry` for confirmation. No separate REST endpoint — vision runs inside the agent.
-
-3. **financial_query** — Answers balance and spending questions by composing `list_transactions`, `list_accounts`, and `list_reports` calls, then summarises in plain language with optional drill-down buttons.
-
-4. **report_generator** — Generates and delivers structured reports. Fetches from `/reports/*`, formats as readable summary, offers further breakdown.
-
-5. **investment_tracker** — Handles investment operations end-to-end: buy/sell lots, check portfolio value, review capital gains. Domain knowledge: FIFO, milliunits, paise, STCG/LTCG rules, FD compounding.
-
-6. **bank_reconciler** — Full PDF import flow: `import_statement` → `review_staging` → conversational row-by-row review (auto-confirm non-duplicates, surface flagged rows) → `confirm_staging`. Replaces the web import UI entirely.
-
-7. **recurring_manager** — Proactive recurring handling triggered by scheduler. Fetches due items, DMs user, handles confirm/skip/edit per item via inline buttons.
+| Tool | Endpoint | Purpose |
+|------|----------|---------|
+| `get_recurring_due` | `GET /recurring/due-today` | Today's pending recurring items |
+| `confirm_recurring` | `POST /recurring/queue/{id}/confirm` | Post a recurring item |
+| `skip_recurring` | `POST /recurring/queue/{id}/skip` | Skip a recurring item |
 
 ### Transport Layers
 
@@ -153,31 +171,33 @@ The agent is implemented with **tools** (thin wrappers over backend endpoints) a
 #### Web Chat Window
 
 - Persistent sidebar panel in the web app (right side, always visible)
-- Connects to the same agent via a new WebSocket or SSE endpoint
+- Connects to the orchestrator via a WebSocket endpoint (`/chat/ws`)
 - Supports text input and file upload (images, PDFs)
 - Renders proposal cards as interactive UI components (buttons → inline edit forms)
 - Shares session with the web app — no separate auth
 
 ### Module Structure
 
-New `telegram_bot/` package alongside the existing `stow/` package:
+New `agent/` package alongside the existing `stow/` package:
 
-- **bot.py** — aiogram bot setup + FastAPI lifespan integration
-- **router.py** — intent classification (entry / query / import / recurring / image / other)
-- **state.py** — in-memory state machine per user, 10-minute TTL
-- **handlers/**
-  - `start.py` — `/start`, user linking
-  - `text.py` — free text → skill dispatch
-  - `image.py` — image download → `screenshot_parser` skill
-  - `document.py` — PDF download → `bank_reconciler` skill
-  - `edit.py` — inline keyboard callbacks for field edits
-  - `recurring.py` — `/recurring` digest
-- **proposals.py** — card text + inline keyboard builder
-- **keyboard.py** — inline keyboard layouts
-- **queries.py** — query helpers wrapping backend endpoints
-- **utils.py** — date resolution, amount parsing, error formatting
+- **orchestrator.py** — main pydantic_ai agent, `SubAgentCapability` wiring, system prompt
+- **subagents/**
+  - `transaction.py` — `transaction_agent` definition + tools
+  - `account.py` — `account_agent` definition + tools
+  - `import_agent.py` — `import_agent` definition + tools
+  - `report.py` — `report_agent` definition + tools
+  - `investment.py` — `investment_agent` definition + tools
+  - `recurring.py` — `recurring_agent` definition + tools
+- **transport/**
+  - `telegram/`
+    - `bot.py` — aiogram setup + FastAPI lifespan integration
+    - `handlers.py` — text, image, document, callback handlers
+    - `keyboard.py` — inline keyboard builders for proposal cards
+  - `websocket.py` — `/chat/ws` endpoint for web chat
+- **cards.py** — proposal card rendering (text + buttons) shared across transports
+- **deps.py** — `StowDeps` dataclass implementing `SubAgentDepsProtocol` (`clone_for_subagent`)
 
-New WebSocket/SSE router in `stow/routers/chat.py` for the web chat window.
+New router in `stow/routers/chat.py` mounts the WebSocket endpoint.
 
 ### Schema Changes
 
@@ -189,11 +209,9 @@ New `TelegramUser` table in `models.py`:
 
 No `user_id` FK — single-user app, mapping is implicit.
 
-### State Machine
+### Context Isolation
 
-`idle` → `parsing` → `reviewing` → `editing` → `confirming` → `posted`
-
-In-memory dict keyed by `telegram_user_id` (Telegram) or session ID (web chat). 10-minute TTL. State lost on restart — acceptable for a single-user local app.
+Each subagent invocation gets a fresh clone of `StowDeps` via `clone_for_subagent()`. The orchestrator's conversation history is never passed into the subagent — the subagent only sees the task description the orchestrator writes. This keeps subagent context windows small and focused.
 
 ### Conversation Flows
 
@@ -203,6 +221,16 @@ You: paid ₹850 for zomato
 Bot: 📝 Payment #PAY-2026-042
      ₹850  HDFC Bank → Food & Dining
      Date: 16 May 2026  Narration: Zomato
+     [Confirm] [Edit] [Decline]
+```
+
+**Ambiguous entry (orchestrator asks before delegating):**
+```
+You: paid 2400 electricity
+Bot: Which account did you pay from?
+You: HDFC
+Bot: 📝 Payment #PAY-2026-043
+     ₹2,400  HDFC Bank → Electricity Expense
      [Confirm] [Edit] [Decline]
 ```
 
@@ -240,13 +268,13 @@ Bot: 📊 HDFC Equity MF  ₹50,000 → ₹62,400 (+24.8%)
 
 ## Testing Decisions
 
-Tests focus on behavior and state transitions. Mock the LLM, Telegram API, and database.
+Tests focus on behavior and delegation correctness. Mock the LLM and subagent responses; test tool implementations against a real (test) database.
 
-1. **State machine** (`state.py`) — transitions, TTL expiry, concurrent edit handling
-2. **Proposal builder** (`proposals.py`) — card text and keyboard construction across field types
-3. **Intent router** (`router.py`) — correct dispatch for text / image / PDF / slash commands
-4. **Query helpers** (`queries.py`) — balance, spending, history with mocked DB
-5. **End-to-end flows** — text → parse → propose → edit → confirm → post; image → parse → propose → confirm; PDF → stage → review → confirm
+1. **Subagent tools** — each tool tested against a real test DB (integration tests)
+2. **Orchestrator routing** — correct subagent selected for each intent class (mock subagents)
+3. **Proposal card rendering** (`cards.py`) — correct output for each field combination, both transports
+4. **Context isolation** (`deps.py`) — `clone_for_subagent()` produces correct isolation at each nesting depth
+5. **End-to-end flows** — text → delegate → propose → confirm → post; image → extract → delegate → confirm; PDF → stage → review → confirm
 
 Existing `tests/` uses `pytest` + `pytest-asyncio`. New tests follow the same patterns.
 
@@ -262,8 +290,8 @@ Existing `tests/` uses `pytest` + `pytest-asyncio`. New tests follow the same pa
 
 ## Further Notes
 
-- The agent is the primary interface for data entry; the web UI is the primary interface for reading and analysis
+- The orchestrator is the primary interface for data entry; the web UI is the primary interface for reading and analysis
 - Bank import web UI and NL transaction entry widget are removed — the agent fully replaces them
-- Vision (image → transaction) is a model capability used inside the agent; no new REST endpoint is added
-- `aiogram` adds ~500KB to the Docker image — negligible
+- Vision (image → transaction) is a model capability called inline by the orchestrator; no new REST endpoint is added
+- `aiogram` and `subagents-pydantic-ai` are new dependencies; both are lightweight
 - ADR 024 (`docs/adr/024-telegram-bot.md`) documents design rationale and needs to be updated to reflect this architecture
