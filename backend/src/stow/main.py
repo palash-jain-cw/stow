@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from apscheduler import AsyncScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel, Session
 
 from stow.db import engine
@@ -35,6 +36,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(account_groups.router)
 app.include_router(accounts.router)
 app.include_router(opening_balances.router)

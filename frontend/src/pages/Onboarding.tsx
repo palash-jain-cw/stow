@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, Loader2, Plus, Trash2, Check } from 'lucide-react'
@@ -455,8 +455,9 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
 
 // ── Step 6: Done ──────────────────────────────────────────────────────────────
 
-function StepDone({ fyLabel: fy, accountCount, llmModel }: {
+function StepDone({ fyLabel: fy, accountCount, llmModel, onFinish }: {
   fyLabel: string; accountCount: number; llmModel: string | null
+  onFinish: (dest: '/' | '/transactions') => void
 }) {
   return (
     <StepCard>
@@ -479,18 +480,18 @@ function StepDone({ fyLabel: fy, accountCount, llmModel }: {
         </div>
 
         <div className="space-y-2">
-          <Link
-            to="/"
+          <button
+            onClick={() => onFinish('/')}
             className="block w-full py-2.5 bg-zinc-900 text-white rounded-xl font-medium hover:bg-zinc-700 transition-colors text-center"
           >
             Go to dashboard
-          </Link>
-          <Link
-            to="/transactions"
+          </button>
+          <button
+            onClick={() => onFinish('/transactions')}
             className="block w-full py-2.5 border border-zinc-200 text-zinc-700 rounded-xl font-medium hover:bg-zinc-50 transition-colors text-center text-sm"
           >
             Enter first transaction
-          </Link>
+          </button>
         </div>
       </div>
     </StepCard>
@@ -509,10 +510,12 @@ export default function Onboarding() {
     staleTime: 0,
   })
 
-  // Reverse guard — if already set up, go home
+  // Reverse guard — only fires on initial load, not after we create the FY mid-wizard
+  const guardChecked = useRef(false)
   useEffect(() => {
-    if (isSuccess && fys.length > 0) {
-      navigate('/', { replace: true })
+    if (isSuccess && !guardChecked.current) {
+      guardChecked.current = true
+      if (fys.length > 0) navigate('/', { replace: true })
     }
   }, [isSuccess, fys, navigate])
 
@@ -524,7 +527,8 @@ export default function Onboarding() {
   const [llmModel, setLlmModel] = useState<string | null>(null)
 
   const afterFy = (id: number, startDate: string, label: string) => {
-    qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
+    // Don't invalidate here — that would trigger the reverse guard and skip steps 3-6.
+    // We invalidate at the very end in onFinish.
     setFyId(id)
     setFyStartDate(startDate)
     setFyLabelStr(label)
@@ -532,7 +536,6 @@ export default function Onboarding() {
   }
 
   const afterAccounts = (accounts: Array<{ id: number; name: string }>) => {
-    qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
     setCreatedAccounts(accounts)
     setStep(accounts.length > 0 ? 4 : 5)
   }
@@ -543,12 +546,17 @@ export default function Onboarding() {
   const skipBalances = () => setStep(5)
 
   const afterAi = (model: string) => {
-    qc.invalidateQueries({ queryKey: queryKeys.ai.config() })
     setLlmModel(model)
     setStep(6)
   }
 
   const skipAi = () => setStep(6)
+
+  // Await invalidation before navigating so RequireSetup sees the new FY in cache
+  const onFinish = async (dest: '/' | '/transactions') => {
+    await qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
+    navigate(dest, { replace: true })
+  }
 
   if (step === 1) return <StepWelcome onNext={() => setStep(2)} />
 
@@ -575,6 +583,7 @@ export default function Onboarding() {
       fyLabel={fyLabelStr}
       accountCount={createdAccounts.length}
       llmModel={llmModel}
+      onFinish={onFinish}
     />
   )
 }
