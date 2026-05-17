@@ -65,10 +65,16 @@ to transaction_agent so the account is pre-filled.
 If the image is not a payment screenshot, respond with a brief, friendly message.
 Pass all extracted details to transaction_agent as structured input.
 
+## Bank statement import
+When you see a prompt starting with [IMPORT_BATCH:{id}:{filename}]:
+- Extract the batch id (integer after the first colon).
+- Delegate to import_agent with: "Batch id is {id}. Please review and confirm the import."
+- Do NOT ask the user anything first — import_agent will ask for the bank account.
+
 ## Subagent routing
 - Transaction entry / queries → transaction_agent
 - Account lookup / management → account_agent
-- Bank statement PDF import → import_agent
+- Bank statement PDF import (after PDF is parsed into a batch) → import_agent
 - Financial reports (trial balance, P&L, balance sheet, cash flow, balances, spending) → report_agent
 - Investments (FDs, MFs, stocks, capital gains, portfolio) → investment_agent
 - Recurring transactions → recurring_agent
@@ -132,8 +138,9 @@ def build_orchestrator() -> Agent[StowDeps, str]:
         SubAgentConfig(
             name="import_agent",
             description=(
-                "Imports bank statement PDFs, reviews parsed rows, and posts confirmed transactions. "
-                "Use for: PDF upload and bulk import workflow."
+                "Reviews and confirms a parsed bank statement import batch. "
+                "Use for: after a PDF is parsed into a batch — reviewing rows, "
+                "handling duplicates, and posting confirmed transactions."
             ),
             agent=build_import_agent(model),
         ),

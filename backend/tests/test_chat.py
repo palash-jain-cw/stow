@@ -4,6 +4,8 @@ from __future__ import annotations
 import base64
 from unittest.mock import patch
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -107,6 +109,70 @@ class TestWebSocketChat:
                 assert messages[-1]["type"] == "done"
 
 
+class TestUploadPdfToBatch:
+    """Unit tests for _upload_pdf_to_batch."""
+
+    @pytest.mark.asyncio
+    async def test_returns_import_batch_prompt_on_success(self):
+        """Successful upload returns an [IMPORT_BATCH:...] prompt string."""
+        from unittest.mock import AsyncMock, MagicMock
+        from agent.transport.websocket import _upload_pdf_to_batch
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {"id": 7, "row_count": 42}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        result = await _upload_pdf_to_batch(b"%PDF fake", "hdfc.pdf", mock_client, "http://test")
+
+        assert "[IMPORT_BATCH:7:hdfc.pdf]" in result
+        assert "42" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_error_message_on_failure(self):
+        """Failed upload returns a user-friendly error string."""
+        from unittest.mock import AsyncMock
+        from agent.transport.websocket import _upload_pdf_to_batch
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=Exception("connection refused"))
+
+        result = await _upload_pdf_to_batch(b"bad", "x.pdf", mock_client, "http://test")
+
+        assert isinstance(result, str)
+        assert "sorry" in result.lower() or "couldn't" in result.lower()
+
+    def test_pdf_websocket_message_triggers_upload(self, client):
+        """WebSocket PDF message calls _upload_pdf_to_batch (not _build_prompt PDF path)."""
+        from unittest.mock import patch, AsyncMock
+
+        pdf_bytes = b"%PDF-1.4 fake"
+        b64 = base64.b64encode(pdf_bytes).decode()
+
+        async def fake_upload(file_bytes, fname, http_client, base_url):
+            return "[IMPORT_BATCH:5:stmt.pdf] Statement parsed — 10 rows ready."
+
+        with patch("stow.routers.chat.build_orchestrator", return_value=_test_orchestrator()):
+            with patch("agent.transport.websocket._upload_pdf_to_batch", side_effect=fake_upload):
+                with client.websocket_connect("/chat/ws") as ws:
+                    ws.send_json({
+                        "type": "file",
+                        "content": b64,
+                        "mime_type": "application/pdf",
+                        "filename": "stmt.pdf",
+                    })
+                    messages = []
+                    while True:
+                        msg = ws.receive_json()
+                        messages.append(msg)
+                        if msg.get("type") == "done":
+                            break
+
+                    assert messages[-1]["type"] == "done"
+
+
 class TestBuildPrompt:
     """Unit tests for _build_prompt in websocket.py."""
 
@@ -128,8 +194,12 @@ class TestBuildPrompt:
         assert len(text_parts) == 1
         assert "screenshot" in text_parts[0].lower()
 
-    def test_pdf_returns_text_prompt(self):
-        """PDF file produces a plain text prompt with [PDF:...] prefix."""
+    def test_non_image_file_returns_unsupported_message(self):
+        """Non-image file (e.g. PDF via _build_prompt directly) returns unsupported message.
+
+        PDFs are handled by _upload_pdf_to_batch in handle_websocket, not by _build_prompt.
+        This test confirms _build_prompt has a safe fallback for that path.
+        """
         from agent.transport.websocket import _build_prompt
 
         pdf_bytes = b"%PDF-1.4 content"
@@ -142,8 +212,7 @@ class TestBuildPrompt:
         })
 
         assert isinstance(result, str)
-        assert result.startswith("[PDF:")
-        assert "statement.pdf" in result
+        assert "unsupported" in result.lower() or "pdf" in result.lower()
 
     def test_text_returns_content_string(self):
         """Plain text message returns the content string unchanged."""

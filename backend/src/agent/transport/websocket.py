@@ -12,7 +12,10 @@ from agent.deps import StowDeps
 
 
 def _build_prompt(data: dict) -> str | list:
-    """Convert an incoming WebSocket message into a pydantic_ai prompt."""
+    """Convert an incoming WebSocket message (text or image) into a pydantic_ai prompt.
+
+    PDFs are NOT handled here — they are pre-uploaded in handle_websocket before this is called.
+    """
     msg_type = data.get("type", "text")
     content = data.get("content", "")
 
@@ -21,18 +24,38 @@ def _build_prompt(data: dict) -> str | list:
         mime_type = data.get("mime_type", "application/octet-stream")
         if mime_type.startswith("image/"):
             return [BinaryContent(data=file_bytes, media_type=mime_type), "Process this UPI payment screenshot"]
-        # PDF/other: pass as a text prompt — import_agent handles the base64
-        fname = data.get("filename", "document")
-        return f"[PDF:{content}:{fname}] Import this bank statement"
+        return "Unsupported file type. Please send an image or a bank statement PDF."
 
     return content
+
+
+async def _upload_pdf_to_batch(
+    file_bytes: bytes,
+    fname: str,
+    http_client: httpx.AsyncClient,
+    base_url: str,
+) -> str:
+    """Upload a PDF to POST /imports and return an IMPORT_BATCH prompt for the orchestrator."""
+    try:
+        r = await http_client.post(
+            f"{base_url}/imports",
+            files={"file": (fname, file_bytes, "application/pdf")},
+        )
+        r.raise_for_status()
+        batch = r.json()
+        return (
+            f"[IMPORT_BATCH:{batch['id']}:{fname}] "
+            f"Bank statement parsed — {batch['row_count']} rows ready for review."
+        )
+    except Exception as exc:
+        return f"Sorry, I couldn't parse the bank statement PDF ({exc}). Please try again."
 
 
 async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
     await websocket.accept()
     message_history: list[ModelMessage] = []
 
-    async with httpx.AsyncClient(timeout=60.0) as http_client:
+    async with httpx.AsyncClient(timeout=120.0) as http_client:
         deps = StowDeps(
             base_url=os.environ.get("STOW_BASE_URL", "http://localhost:8000"),
             http_client=http_client,
@@ -40,7 +63,14 @@ async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
         try:
             while True:
                 data = await websocket.receive_json()
-                prompt = _build_prompt(data)
+                msg_type = data.get("type", "text")
+                mime_type = data.get("mime_type", "")
+                fname = data.get("filename", "statement.pdf")
+                if msg_type == "file" and not mime_type.startswith("image/"):
+                    file_bytes = base64.b64decode(data.get("content", ""))
+                    prompt = await _upload_pdf_to_batch(file_bytes, fname, http_client, deps.base_url)
+                else:
+                    prompt = _build_prompt(data)
 
                 try:
                     async with orchestrator.run_stream(

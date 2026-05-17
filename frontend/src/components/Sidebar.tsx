@@ -3,7 +3,6 @@ import {
   LayoutDashboard,
   List,
   Layers,
-  FileUp,
   BarChart2,
   Briefcase,
   Settings,
@@ -50,11 +49,6 @@ export function Sidebar() {
       <NavItem to="/" icon={LayoutDashboard} label="Dashboard" end />
       <NavItem to="/transactions" icon={List} label="Transactions" />
       <NavItem to="/accounts" icon={Layers} label="Accounts" />
-
-      <div className="w-6 border-t border-zinc-100 my-1" />
-
-      {/* Import */}
-      <NavItem to="/import" icon={FileUp} label="Bank Import" />
 
       <div className="w-6 border-t border-zinc-100 my-1" />
 

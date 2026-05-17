@@ -33,11 +33,6 @@ test('/accounts/:id renders AccountDetail', () => {
   expect(screen.getByRole('heading', { name: /account detail/i })).toBeInTheDocument()
 })
 
-test('/import renders Import', () => {
-  renderAt('/import')
-  expect(screen.getByRole('heading', { name: /import/i })).toBeInTheDocument()
-})
-
 test('/reports renders Reports', () => {
   renderAt('/reports')
   expect(screen.getByRole('heading', { name: /reports/i })).toBeInTheDocument()

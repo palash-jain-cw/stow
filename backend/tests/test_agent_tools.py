@@ -41,6 +41,12 @@ from agent.subagents.recurring import (
     _get_recurring_due,
     _list_schedules,
 )
+from agent.subagents.import_agent import (
+    _review_staging,
+    _update_staging_row,
+    _confirm_staging,
+    _get_batch,
+)
 from agent.deps import StowDeps
 
 
@@ -313,6 +319,45 @@ class TestRecurringTools:
     async def test_list_schedules_empty(self, ctx):
         result = await _list_schedules(ctx)
         assert isinstance(result, list)
+
+
+class TestImportAgentTools:
+    """Tests for import_agent tools: review, update, confirm staging."""
+
+    @pytest.fixture()
+    def batch(self, session):
+        """Create a ready import batch with one staging row directly via the test session."""
+        from datetime import date as _date
+        from stow.models import ImportBatch, StagingRow
+
+        b = ImportBatch(filename="test_stmt.pdf", status="ready")
+        session.add(b)
+        session.flush()
+        row = StagingRow(
+            batch_id=b.id,
+            raw_data={"desc": "SWIGGY PAYMENT"},
+            date=_date(2026, 5, 10),
+            amount=-30000,
+            description="SWIGGY PAYMENT",
+        )
+        session.add(row)
+        session.flush()
+        return {"batch_id": b.id, "row_id": row.id}
+
+    async def test_review_staging_returns_rows(self, ctx, batch):
+        rows = await _review_staging(ctx, batch["batch_id"])
+        assert isinstance(rows, list)
+        assert len(rows) >= 1
+        assert any(r["description"] == "SWIGGY PAYMENT" for r in rows)
+
+    async def test_update_staging_row_status(self, ctx, batch):
+        row = await _update_staging_row(ctx, batch["batch_id"], batch["row_id"], status="confirmed")
+        assert row["status"] == "confirmed"
+
+    async def test_get_batch_returns_counts(self, ctx, batch):
+        result = await _get_batch(ctx, batch["batch_id"])
+        assert "counts" in result
+        assert "pending" in result["counts"]
 
 
 # ─── Dep isolation test ────────────────────────────────────────────────────

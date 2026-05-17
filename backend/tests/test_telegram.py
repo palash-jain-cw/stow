@@ -206,6 +206,40 @@ async def test_photo_handler_builds_binary_content_prompt():
 
 
 @pytest.mark.asyncio
+async def test_pdf_handler_builds_import_batch_prompt():
+    """Telegram PDF handler pre-uploads and produces an [IMPORT_BATCH:...] prompt."""
+    captured: dict = {}
+
+    async def mock_run(prompt, user_id):
+        captured["prompt"] = prompt
+        return "ok"
+
+    async def fake_upload(file_bytes, fname, http_client, base_url):
+        return f"[IMPORT_BATCH:3:{fname}] Statement parsed."
+
+    with patch("agent.transport.telegram.handlers._get_orchestrator_runner", return_value=mock_run):
+        with patch("agent.transport.websocket._upload_pdf_to_batch", side_effect=fake_upload):
+            import agent.transport.telegram.handlers as h_mod
+            dp = Dispatcher()
+            h_mod.register_handlers(dp)
+
+            handle_message = _find_handler(dp, "handle_message")
+
+            msg = _make_message()
+            msg.photo = None
+            doc = MagicMock()
+            doc.file_name = "statement.pdf"
+            doc.file_id = "doc123"
+            msg.document = doc
+            msg.bot.get_file = AsyncMock(return_value=MagicMock(file_path="files/x.pdf"))
+            msg.bot.download_file = AsyncMock(return_value=BytesIO(b"%PDF fake"))
+
+            await handle_message(msg)
+
+    assert captured["prompt"].startswith("[IMPORT_BATCH:3:statement.pdf]")
+
+
+@pytest.mark.asyncio
 async def test_photo_handler_uses_default_caption_when_none():
     """Photo without a caption uses a default instruction string."""
     from pydantic_ai.messages import BinaryContent

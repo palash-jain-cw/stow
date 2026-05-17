@@ -126,12 +126,15 @@ def register_handlers(dp: Dispatcher) -> None:
             await _send_reply(message, reply, user_id)
 
         elif message.document and message.document.file_name and message.document.file_name.lower().endswith(".pdf"):
+            import httpx as _httpx
+            import os as _os
+            from agent.transport.websocket import _upload_pdf_to_batch
             file = await message.bot.get_file(message.document.file_id)  # type: ignore[union-attr]
             file_bytes = await message.bot.download_file(file.file_path)  # type: ignore[union-attr]
-            import base64
-            b64 = base64.b64encode(file_bytes.read()).decode()
             fname = message.document.file_name
-            prompt = f"[PDF:{b64}:{fname}] Import this bank statement"
+            base_url = _os.environ.get("STOW_BASE_URL", "http://localhost:8000")
+            async with _httpx.AsyncClient(timeout=120.0) as _client:
+                prompt = await _upload_pdf_to_batch(file_bytes.read(), fname, _client, base_url)
             reply = await _run(prompt, user_id)
             await _send_reply(message, reply, user_id)
 

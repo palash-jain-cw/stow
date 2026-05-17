@@ -5,19 +5,30 @@ from typing import Any, Optional
 from pydantic_ai import Agent, RunContext
 
 from agent.deps import StowDeps
+from agent.subagents.transaction import _get_active_fy, _list_accounts
 
 _INSTRUCTIONS = """\
 You are the import agent for an Indian personal finance system.
-You handle bank statement PDF uploads, staging review, and confirmation.
+The bank statement PDF has already been parsed. You receive a batch_id from the orchestrator.
 
 Workflow:
-1. import_statement — upload PDF → returns batch with parsed rows
-2. review_staging — list rows, noting status (pending | confirmed | discarded) and possible_duplicate flag
-3. Auto-confirm non-duplicate rows via update_staging_row (set status="confirmed")
-4. Surface only flagged duplicates for user review
-5. confirm_staging — post all confirmed rows as transactions
+1. Call review_staging(batch_id) to see all parsed rows.
+2. Auto-confirm every row where possible_duplicate=False by calling
+   update_staging_row(batch_id, row_id, status="confirmed") for each.
+3. For each row where possible_duplicate=True, show the user ONE AT A TIME:
+     "📋 {date} · {description} · ₹{amount/100:,.2f} — possible duplicate.
+      Reply 'confirm anyway', 'skip', or 'view existing' (txn #{matched_transaction_id})."
+   Wait for their reply before moving to the next duplicate.
+   - 'confirm anyway' → update_staging_row(batch_id, row_id, status="confirmed")
+   - 'skip' → update_staging_row(batch_id, row_id, status="discarded")
+4. Call list_accounts to let the user pick a bank account, then call get_active_fy.
+5. Call confirm_staging(batch_id, bank_account_id, fy_id).
+6. Report: "✅ {posted} transactions posted. {reconciled} reconciled. {skipped} skipped."
 
-Always ask for bank_account_id and fy_id before calling confirm_staging.
+Rules:
+- Display amounts as ₹X,XX,XXX (Indian comma format).
+- Display dates as DD Mon YYYY.
+- Never call confirm_staging without first having both bank_account_id and fy_id confirmed.
 """
 
 
@@ -159,7 +170,8 @@ def build_import_agent(model: Any) -> Agent[StowDeps, str]:
         deps_type=StowDeps,
         instructions=_INSTRUCTIONS,
         tools=[
-            _import_statement,
+            _get_active_fy,
+            _list_accounts,
             _review_staging,
             _confirm_staging,
             _match_staging_row,
