@@ -105,3 +105,49 @@ class TestWebSocketChat:
                         break
 
                 assert messages[-1]["type"] == "done"
+
+
+class TestBuildPrompt:
+    """Unit tests for _build_prompt in websocket.py."""
+
+    def test_image_returns_binary_content_with_text_hint(self):
+        """Image file produces [BinaryContent, str] so the LLM sees both image and instruction."""
+        from pydantic_ai.messages import BinaryContent
+        from agent.transport.websocket import _build_prompt
+
+        image_bytes = b"\x89PNG fake image"
+        b64 = base64.b64encode(image_bytes).decode()
+        result = _build_prompt({"type": "file", "content": b64, "mime_type": "image/png"})
+
+        assert isinstance(result, list)
+        binary_parts = [p for p in result if isinstance(p, BinaryContent)]
+        assert len(binary_parts) == 1
+        assert binary_parts[0].data == image_bytes
+        assert binary_parts[0].media_type == "image/png"
+        text_parts = [p for p in result if isinstance(p, str)]
+        assert len(text_parts) == 1
+        assert "screenshot" in text_parts[0].lower()
+
+    def test_pdf_returns_text_prompt(self):
+        """PDF file produces a plain text prompt with [PDF:...] prefix."""
+        from agent.transport.websocket import _build_prompt
+
+        pdf_bytes = b"%PDF-1.4 content"
+        b64 = base64.b64encode(pdf_bytes).decode()
+        result = _build_prompt({
+            "type": "file",
+            "content": b64,
+            "mime_type": "application/pdf",
+            "filename": "statement.pdf",
+        })
+
+        assert isinstance(result, str)
+        assert result.startswith("[PDF:")
+        assert "statement.pdf" in result
+
+    def test_text_returns_content_string(self):
+        """Plain text message returns the content string unchanged."""
+        from agent.transport.websocket import _build_prompt
+
+        result = _build_prompt({"type": "text", "content": "hello"})
+        assert result == "hello"

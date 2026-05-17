@@ -20,7 +20,7 @@ def _build_prompt(data: dict) -> str | list:
         file_bytes = base64.b64decode(content)
         mime_type = data.get("mime_type", "application/octet-stream")
         if mime_type.startswith("image/"):
-            return [BinaryContent(data=file_bytes, media_type=mime_type)]
+            return [BinaryContent(data=file_bytes, media_type=mime_type), "Process this UPI payment screenshot"]
         # PDF/other: pass as a text prompt — import_agent handles the base64
         fname = data.get("filename", "document")
         return f"[PDF:{content}:{fname}] Import this bank statement"

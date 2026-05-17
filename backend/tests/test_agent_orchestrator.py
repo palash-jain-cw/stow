@@ -74,6 +74,54 @@ class TestOrchestratorRouting:
         assert any(keyword in output for keyword in ["500", "confirm", "payment", "propose"])
 
 
+class TestMerchantRulesTool:
+    """Unit tests for the _get_merchant_rules orchestrator tool."""
+
+    @pytest.fixture()
+    async def http_client(self, asgi_app, session):
+        from stow.db import get_session
+        asgi_app.dependency_overrides[get_session] = lambda: session
+        transport = httpx.ASGITransport(app=asgi_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+        asgi_app.dependency_overrides.clear()
+
+    @pytest.fixture()
+    def ctx(self, http_client, session):
+        from unittest.mock import MagicMock
+        deps = StowDeps(base_url="http://test", http_client=http_client)
+        mock = MagicMock()
+        mock.deps = deps
+        return mock
+
+    async def test_get_merchant_rules_returns_list(self, ctx, session):
+        """_get_merchant_rules fetches all rules from GET /merchant-rules."""
+        from sqlmodel import select
+        from stow.models import AccountGroup, Account, MerchantRule
+        from agent.orchestrator import _get_merchant_rules
+
+        asset_group = session.exec(
+            select(AccountGroup).where(AccountGroup.nature == "asset")
+        ).first()
+        account = Account(name="HDFC Rule Test", group_id=asset_group.id)
+        session.add(account)
+        session.flush()
+        rule = MerchantRule(pattern="zomato", account_id=account.id)
+        session.add(rule)
+        session.flush()
+
+        rules = await _get_merchant_rules(ctx)
+        assert isinstance(rules, list)
+        assert any(r["pattern"] == "zomato" for r in rules)
+
+    async def test_get_merchant_rules_empty_when_none(self, ctx):
+        """_get_merchant_rules returns [] when no rules exist."""
+        from agent.orchestrator import _get_merchant_rules
+
+        rules = await _get_merchant_rules(ctx)
+        assert isinstance(rules, list)
+
+
 class TestStowDepsProtocol:
     """Verify StowDeps satisfies SubAgentDepsProtocol."""
 

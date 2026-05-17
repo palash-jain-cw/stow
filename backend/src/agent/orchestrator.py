@@ -17,6 +17,18 @@ async def _get_current_datetime(ctx: RunContext[StowDeps]) -> dict:
         "display": now.strftime("%d %b %Y"),
         "time": now.strftime("%H:%M"),
     }
+
+
+async def _get_merchant_rules(ctx: RunContext[StowDeps]) -> list[dict]:
+    """Return merchant matching rules for UPI/payment account pre-fill.
+
+    Each rule has a pattern (case-insensitive substring, e.g. "zomato") and an account_id.
+    Call this when processing a payment screenshot to check if the merchant name matches
+    any rule and pre-fill the account before delegating to transaction_agent.
+    """
+    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/merchant-rules")
+    r.raise_for_status()
+    return r.json()
 from agent.subagents.account import build_account_agent
 from agent.subagents.import_agent import build_import_agent
 from agent.subagents.investment import build_investment_agent
@@ -47,7 +59,11 @@ When the user sends an image, analyze it to extract:
   - Merchant / payee name
   - Date of transaction
   - UPI ID or reference number (if visible)
-Then pass the extracted details to transaction_agent as structured input.
+Then call get_merchant_rules and check if any rule's pattern is a case-insensitive substring
+of the merchant name. If a match is found, include that account_id in the structured input
+to transaction_agent so the account is pre-filled.
+If the image is not a payment screenshot, respond with a brief, friendly message.
+Pass all extracted details to transaction_agent as structured input.
 
 ## Subagent routing
 - Transaction entry / queries → transaction_agent
@@ -151,7 +167,7 @@ def build_orchestrator() -> Agent[StowDeps, str]:
         model=model,
         deps_type=StowDeps,
         instructions=_SYSTEM_PROMPT,
-        tools=[_get_current_datetime],
+        tools=[_get_current_datetime, _get_merchant_rules],
         capabilities=[
             SubAgentCapability(
                 subagents=subagent_configs,

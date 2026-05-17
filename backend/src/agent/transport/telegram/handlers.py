@@ -46,7 +46,7 @@ def _get_orchestrator_runner() -> Callable:
 
     _orch = build_orchestrator()
 
-    async def run(prompt: str, user_id: int) -> str:
+    async def run(prompt: str | list, user_id: int) -> str:
         history = _history.get(user_id, [])
         async with httpx.AsyncClient(timeout=60.0) as client:
             deps = StowDeps.build()
@@ -114,12 +114,14 @@ def register_handlers(dp: Dispatcher) -> None:
         user_id = message.from_user.id
 
         if message.photo:
+            from pydantic_ai.messages import BinaryContent
             photo = message.photo[-1]
             file = await message.bot.get_file(photo.file_id)  # type: ignore[union-attr]
             file_bytes = await message.bot.download_file(file.file_path)  # type: ignore[union-attr]
-            import base64
-            b64 = base64.b64encode(file_bytes.read()).decode()
-            prompt = f"[IMAGE:{b64}] {message.caption or 'Process this payment screenshot'}"
+            prompt = [
+                BinaryContent(data=file_bytes.read(), media_type="image/jpeg"),
+                message.caption or "Process this payment screenshot",
+            ]
             reply = await _run(prompt, user_id)
             await _send_reply(message, reply, user_id)
 
