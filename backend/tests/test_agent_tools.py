@@ -28,9 +28,14 @@ from agent.subagents.account import (
     _list_accounts as _account_list_accounts,
 )
 from agent.subagents.report import (
+    _get_balance_sheet,
+    _get_cash_flow,
+    _get_current_date,
     _get_financial_years,
-    _get_trial_balance,
     _get_profit_loss,
+    _get_trial_balance,
+    _list_accounts as _report_list_accounts,
+    _list_transactions as _report_list_transactions,
 )
 from agent.subagents.recurring import (
     _get_recurring_due,
@@ -220,11 +225,65 @@ class TestAccountTools:
 
 
 class TestReportTools:
+    async def test_get_current_date(self, ctx):
+        result = await _get_current_date(ctx)
+        assert "date" in result
+        assert "year" in result and "month" in result and "day" in result
+        import re
+        assert re.match(r"\d{4}-\d{2}-\d{2}", result["date"])
+
     async def test_get_financial_years(self, ctx, fy):
         result = await _get_financial_years(ctx)
         assert isinstance(result, list)
         ids = [f["id"] for f in result]
         assert fy["id"] in ids
+
+    async def test_list_accounts(self, ctx, two_accounts):
+        result = await _report_list_accounts(ctx)
+        assert isinstance(result, list)
+        names = [a["name"] for a in result]
+        assert "Test Bank" in names
+
+    async def test_list_transactions_no_filter(self, ctx, fy, two_accounts):
+        bank, expense = two_accounts
+        await _create_transaction(
+            ctx,
+            type="payment",
+            date_str="2026-05-01",
+            narration="Report filter test",
+            fy_id=fy["id"],
+            from_account_id=bank["id"],
+            to_account_id=expense["id"],
+            amount_paise=5000,
+        )
+        result = await _report_list_transactions(ctx)
+        assert any(t["narration"] == "Report filter test" for t in result)
+
+    async def test_list_transactions_from_date_filter(self, ctx, fy, two_accounts):
+        bank, expense = two_accounts
+        await _create_transaction(
+            ctx, type="payment", date_str="2026-04-10", narration="April report txn",
+            fy_id=fy["id"], from_account_id=bank["id"], to_account_id=expense["id"], amount_paise=100,
+        )
+        await _create_transaction(
+            ctx, type="payment", date_str="2026-06-10", narration="June report txn",
+            fy_id=fy["id"], from_account_id=bank["id"], to_account_id=expense["id"], amount_paise=100,
+        )
+        result = await _report_list_transactions(ctx, from_date="2026-06-01")
+        narrations = [t["narration"] for t in result]
+        assert "June report txn" in narrations
+        assert "April report txn" not in narrations
+
+    async def test_list_transactions_date_range(self, ctx, fy, two_accounts):
+        bank, expense = two_accounts
+        await _create_transaction(
+            ctx, type="payment", date_str="2026-05-15", narration="May range txn",
+            fy_id=fy["id"], from_account_id=bank["id"], to_account_id=expense["id"], amount_paise=200,
+        )
+        result = await _report_list_transactions(
+            ctx, from_date="2026-05-01", to_date="2026-05-31"
+        )
+        assert any(t["narration"] == "May range txn" for t in result)
 
     async def test_get_trial_balance(self, ctx, fy, two_accounts):
         result = await _get_trial_balance(ctx, fy["id"])
@@ -232,7 +291,18 @@ class TestReportTools:
 
     async def test_get_profit_loss(self, ctx, fy):
         result = await _get_profit_loss(ctx, fy["id"])
-        assert "income" in result or "sections" in result or isinstance(result, dict)
+        assert isinstance(result, dict)
+        assert "total_income" in result or "net_profit" in result
+
+    async def test_get_balance_sheet(self, ctx, fy):
+        result = await _get_balance_sheet(ctx, fy["id"])
+        assert isinstance(result, dict)
+        assert "total_assets" in result
+
+    async def test_get_cash_flow(self, ctx, fy):
+        result = await _get_cash_flow(ctx, fy["id"])
+        assert isinstance(result, dict)
+        assert "net_change_in_cash" in result or "sections" in result
 
 
 class TestRecurringTools:

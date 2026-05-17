@@ -119,3 +119,56 @@ def test_locked_fy_rejects_edit(client, fy, accounts):
     client.post(f"/financial-years/{fy['id']}/lock")
     resp = client.put(f"/transactions/{txn['id']}", json={"narration": "changed"})
     assert resp.status_code == 403
+
+
+# ── Slice 7: date range filtering ─────────────────────────────────────────
+
+def _make_txn_on(fy_id, bank_id, expense_id, date_str, narration="txn"):
+    return {
+        "type": "payment",
+        "date": date_str,
+        "narration": narration,
+        "fy_id": fy_id,
+        "entries": [
+            {"account_id": expense_id, "amount": 10000},
+            {"account_id": bank_id,    "amount": -10000},
+        ],
+    }
+
+
+def test_list_transactions_from_date_filter(client, fy, accounts):
+    b, e = accounts["bank"]["id"], accounts["expense"]["id"]
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-04-15", "April txn"))
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-06-15", "June txn"))
+
+    resp = client.get("/transactions?from_date=2025-06-01")
+    assert resp.status_code == 200
+    narrations = [t["narration"] for t in resp.json()]
+    assert "June txn" in narrations
+    assert "April txn" not in narrations
+
+
+def test_list_transactions_to_date_filter(client, fy, accounts):
+    b, e = accounts["bank"]["id"], accounts["expense"]["id"]
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-04-15", "April txn"))
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-06-15", "June txn"))
+
+    resp = client.get("/transactions?to_date=2025-04-30")
+    assert resp.status_code == 200
+    narrations = [t["narration"] for t in resp.json()]
+    assert "April txn" in narrations
+    assert "June txn" not in narrations
+
+
+def test_list_transactions_date_range_filter(client, fy, accounts):
+    b, e = accounts["bank"]["id"], accounts["expense"]["id"]
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-04-15", "April txn"))
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-06-15", "June txn"))
+    client.post("/transactions", json=_make_txn_on(fy["id"], b, e, "2025-08-15", "August txn"))
+
+    resp = client.get("/transactions?from_date=2025-05-01&to_date=2025-07-31")
+    assert resp.status_code == 200
+    narrations = [t["narration"] for t in resp.json()]
+    assert "June txn" in narrations
+    assert "April txn" not in narrations
+    assert "August txn" not in narrations

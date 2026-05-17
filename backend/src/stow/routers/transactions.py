@@ -140,6 +140,8 @@ def list_transactions(
     type: Optional[str] = None,
     account_id: Optional[int] = None,
     q: Optional[str] = None,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
     session: Session = Depends(get_session),
 ):
     stmt = select(Transaction)
@@ -147,6 +149,10 @@ def list_transactions(
         stmt = stmt.where(Transaction.type == type)
     if q:
         stmt = stmt.where(col(Transaction.narration).ilike(f"%{q}%"))
+    if from_date:
+        stmt = stmt.where(Transaction.date >= from_date)
+    if to_date:
+        stmt = stmt.where(Transaction.date <= to_date)
     if account_id:
         stmt = stmt.join(Entry, col(Entry.transaction_id) == col(Transaction.id)).where(
             Entry.account_id == account_id
