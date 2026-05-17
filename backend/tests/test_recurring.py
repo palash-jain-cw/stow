@@ -186,7 +186,139 @@ def test_schedule_past_end_date_produces_no_queue_entry(client, session, templat
     assert s["next_due_date"] == "2025-05-01"
 
 
-# ── Slice 8: auto_post_pending ───────────────────────────────────────────────
+# ── Slice 8: due-today detail enrichment ──────────────────────────────────────
+
+def test_due_today_includes_transaction_details(client, session, template_txn, bank, expense_account):
+    today = date.today()
+    make_schedule(client, template_txn["id"], frequency="daily",
+                  first_due_date=today.isoformat())
+    _run_morning_job(client, session, today)
+
+    resp = client.get("/recurring/due-today")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) >= 1
+    item = items[0]
+    assert item["narration"] == "Monthly rent"
+    assert item["txn_type"] == "payment"
+    assert item["amount_paise"] == 5_000_000
+    assert item["from_account_name"] == bank["name"]      # bank is credit (money leaves)
+    assert item["to_account_name"] == expense_account["name"]  # expense is debit
+
+
+# ── Slice 9: recurring digest job ─────────────────────────────────────────────
+
+def test_build_digest_text_formats_items():
+    from stow.scheduler import _build_digest_text
+
+    class _FakeItem:
+        narration = "Monthly rent"
+        amount_paise = 5_000_000
+        from_account_name = "HDFC Bank"
+        to_account_name = "Rent Expense"
+
+    text = _build_digest_text([_FakeItem()])
+    assert "Monthly rent" in text
+    assert "₹" in text
+    assert "HDFC Bank" in text
+    assert "Rent Expense" in text
+
+
+async def test_recurring_digest_sends_message_when_items_due(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    today = date.today()
+
+    # Fake queue item returned by the DB
+    fake_item = MagicMock()
+    fake_item.schedule_id = 1
+    fake_item.due_date = today
+    fake_item.status = "pending"
+
+    fake_schedule = MagicMock()
+    fake_schedule.template_transaction_id = 10
+
+    fake_txn = MagicMock()
+    fake_txn.narration = "Monthly rent"
+    fake_txn.type = "payment"
+
+    credit_entry = MagicMock()
+    credit_entry.amount = -5_000_000
+    credit_entry.account_id = 2
+
+    debit_entry = MagicMock()
+    debit_entry.amount = 5_000_000
+    debit_entry.account_id = 3
+
+    fake_from_acc = MagicMock()
+    fake_from_acc.name = "HDFC Bank"
+
+    fake_to_acc = MagicMock()
+    fake_to_acc.name = "Rent Expense"
+
+    fake_user = MagicMock()
+    fake_user.telegram_user_id = 123456789
+
+    # exec() is called three times: pending items, entries, telegram users
+    exec_results = [
+        MagicMock(**{"all.return_value": [fake_item]}),
+        MagicMock(**{"all.return_value": [credit_entry, debit_entry]}),
+        MagicMock(**{"all.return_value": [fake_user]}),
+    ]
+    # get() is called four times: schedule, txn, from_acc, to_acc
+    get_results = [fake_schedule, fake_txn, fake_from_acc, fake_to_acc]
+
+    mock_session = MagicMock()
+    mock_session.exec.side_effect = exec_results
+    mock_session.get.side_effect = get_results
+
+    mock_cm = MagicMock()
+    mock_cm.__enter__ = MagicMock(return_value=mock_session)
+    mock_cm.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr("stow.scheduler.Session", lambda *a, **kw: mock_cm)
+
+    mock_bot = MagicMock()
+    mock_bot.send_message = AsyncMock()
+    monkeypatch.setattr("agent.transport.telegram.bot._bot", mock_bot)
+
+    from stow.scheduler import _job_recurring_digest
+    await _job_recurring_digest()
+
+    mock_bot.send_message.assert_called_once()
+    call_kwargs = mock_bot.send_message.call_args.kwargs
+    assert call_kwargs["chat_id"] == 123456789
+    assert "Monthly rent" in call_kwargs["text"]
+
+
+async def test_recurring_digest_silent_when_nothing_due(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_session = MagicMock()
+    mock_session.exec.return_value = MagicMock(**{"all.return_value": []})
+
+    mock_cm = MagicMock()
+    mock_cm.__enter__ = MagicMock(return_value=mock_session)
+    mock_cm.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr("stow.scheduler.Session", lambda *a, **kw: mock_cm)
+
+    mock_bot = MagicMock()
+    mock_bot.send_message = AsyncMock()
+    monkeypatch.setattr("agent.transport.telegram.bot._bot", mock_bot)
+
+    from stow.scheduler import _job_recurring_digest
+    await _job_recurring_digest()
+
+    mock_bot.send_message.assert_not_called()
+
+
+def test_recurring_digest_job_is_registered():
+    from stow.scheduler import JOB_REGISTRY, SCHEDULES
+    assert "recurring_digest" in JOB_REGISTRY
+    schedule_ids = {s[0] for s in SCHEDULES}
+    assert "recurring_digest" in schedule_ids
+
+
+# ── Slice 10: auto_post_pending ───────────────────────────────────────────────
 
 def test_auto_post_pending_creates_auto_posted_transaction(client, session, template_txn):
     from stow.recurring import auto_post_pending

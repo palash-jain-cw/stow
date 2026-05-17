@@ -10,6 +10,13 @@ from aiogram import Bot, Dispatcher
 
 logger = logging.getLogger(__name__)
 
+_bot: Bot | None = None
+
+
+def get_bot() -> Bot | None:
+    """Return the running Bot instance, or None if Telegram is disabled."""
+    return _bot
+
 
 def create_bot_and_dispatcher() -> tuple[Bot, Dispatcher] | tuple[None, None]:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -27,10 +34,12 @@ async def start_polling(bot: Bot, dp: Dispatcher) -> None:
 
 @asynccontextmanager
 async def lifespan_telegram(app: object) -> AsyncGenerator[None, None]:
+    global _bot
     bot, dp = create_bot_and_dispatcher()
     if bot is None:
         yield
         return
+    _bot = bot
 
     from agent.transport.telegram.handlers import register_handlers
     register_handlers(dp)

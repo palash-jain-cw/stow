@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from stow.db import get_session
-from stow.models import RecurringQueueItem, RecurringSchedule, Transaction
+from stow.models import Account, Entry, RecurringQueueItem, RecurringSchedule, Transaction
 from stow.recurring import _clone_transaction, create_queue_entries_for_today
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
@@ -38,6 +38,20 @@ class QueueItemOut(BaseModel):
     due_date: date
     status: str
     posted_transaction_id: Optional[int]
+
+
+class QueueItemDetailOut(BaseModel):
+    id: int
+    schedule_id: int
+    due_date: date
+    status: str
+    narration: str
+    txn_type: str
+    amount_paise: int
+    from_account_id: int
+    from_account_name: str
+    to_account_id: int
+    to_account_name: str
 
 
 _VALID_FREQUENCIES = {"daily", "weekly", "monthly", "yearly"}
@@ -92,14 +106,46 @@ def delete_schedule(schedule_id: int, session: Session = Depends(get_session)):
     session.commit()
 
 
-@router.get("/due-today", response_model=list[QueueItemOut])
+def _enrich_queue_item(session: Session, item: RecurringQueueItem) -> QueueItemDetailOut:
+    schedule = session.get(RecurringSchedule, item.schedule_id)
+    txn = session.get(Transaction, schedule.template_transaction_id)
+    entries = session.exec(
+        select(Entry).where(Entry.transaction_id == schedule.template_transaction_id)
+    ).all()
+
+    # Credit entry (negative amount) = money leaving = "from" account
+    # Debit entry (positive amount)  = money arriving = "to" account
+    credit = next((e for e in entries if e.amount < 0), entries[0] if entries else None)
+    debit = next((e for e in entries if e.amount > 0), entries[-1] if entries else None)
+
+    from_acc = session.get(Account, credit.account_id) if credit else None
+    to_acc = session.get(Account, debit.account_id) if debit else None
+    amount = abs(credit.amount) if credit else (debit.amount if debit else 0)
+
+    return QueueItemDetailOut(
+        id=item.id,
+        schedule_id=item.schedule_id,
+        due_date=item.due_date,
+        status=item.status,
+        narration=txn.narration if txn else "",
+        txn_type=txn.type if txn else "",
+        amount_paise=amount,
+        from_account_id=credit.account_id if credit else 0,
+        from_account_name=from_acc.name if from_acc else "",
+        to_account_id=debit.account_id if debit else 0,
+        to_account_name=to_acc.name if to_acc else "",
+    )
+
+
+@router.get("/due-today", response_model=list[QueueItemDetailOut])
 def due_today(session: Session = Depends(get_session)):
     today = date.today()
-    return session.exec(
+    items = session.exec(
         select(RecurringQueueItem)
         .where(RecurringQueueItem.due_date == today)
         .where(RecurringQueueItem.status == "pending")
     ).all()
+    return [_enrich_queue_item(session, item) for item in items]
 
 
 class ConfirmIn(BaseModel):

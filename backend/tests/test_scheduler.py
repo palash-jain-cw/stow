@@ -5,6 +5,7 @@ import pytest
 EXPECTED_JOB_IDS = {
     "generate_recurring",
     "auto_post",
+    "recurring_digest",
     "fetch_prices_evening",
     "fetch_prices_morning",
 }
