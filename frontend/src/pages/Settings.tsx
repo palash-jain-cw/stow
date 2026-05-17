@@ -770,12 +770,12 @@ function AiPanel() {
           <input
             type="url"
             className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
-            placeholder="http://localhost:11434/v1"
+            placeholder="http://localhost:8001/v1"
             value={baseUrl}
             onChange={e => setBaseUrl(e.target.value)}
           />
           <p className="text-xs text-zinc-400 mt-1">
-            Ollama default is <code className="font-mono">http://localhost:11434/v1</code> · oMLX default is <code className="font-mono">http://localhost:10240/v1</code>
+            oMLX default is <code className="font-mono">http://localhost:8001/v1</code> · Ollama default is <code className="font-mono">http://localhost:11434/v1</code>
           </p>
         </div>
 
@@ -786,7 +786,7 @@ function AiPanel() {
           <input
             type="text"
             className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
-            placeholder="qwen3:30b"
+            placeholder="Qwen3.6-35B-A3B-MLX-VL-oQ4-FP16"
             value={model}
             onChange={e => setModel(e.target.value)}
           />
@@ -795,7 +795,7 @@ function AiPanel() {
 
         <div>
           <label className="block text-xs font-medium text-zinc-600 mb-1">
-            API key <span className="text-zinc-400 font-normal">(optional — leave blank for Ollama)</span>
+            API key <span className="text-zinc-400 font-normal">(oMLX uses <code className="font-mono">omlx</code>)</span>
           </label>
           <input
             type="password"

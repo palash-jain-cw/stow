@@ -38,15 +38,21 @@ def write_config(base_url: str, model: str, api_key: str = "") -> None:
         tomli_w.dump({"llm": data}, f)
 
 
+_DEFAULT_BASE_URL = "http://host.docker.internal:8001/v1"
+_DEFAULT_MODEL = "Qwen3.6-35B-A3B-MLX-VL-oQ4-FP16"
+_DEFAULT_API_KEY = "omlx"
+
+
 def build_model() -> Any:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
     cfg = read_config()
+    base_url = normalize_base_url(cfg["base_url"]) if cfg["base_url"] else _DEFAULT_BASE_URL
     return OpenAIChatModel(
-        cfg["model"] or "default",
+        cfg["model"] or _DEFAULT_MODEL,
         provider=OpenAIProvider(
-            base_url=normalize_base_url(cfg["base_url"]) if cfg["base_url"] else "http://localhost:11434/v1",
-            api_key=cfg.get("api_key") or "not-needed",
+            base_url=base_url,
+            api_key=cfg.get("api_key") or _DEFAULT_API_KEY,
         ),
     )
 

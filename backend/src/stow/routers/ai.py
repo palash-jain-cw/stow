@@ -67,12 +67,13 @@ async def test_connection(body: TestConnectionIn = TestConnectionIn()):
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai import Agent
-        effective_url = normalize_base_url(base_url) if base_url else "http://localhost:11434/v1"
+        from stow.ai_config import _DEFAULT_API_KEY, _DEFAULT_BASE_URL, _DEFAULT_MODEL
+        effective_url = normalize_base_url(base_url) if base_url else _DEFAULT_BASE_URL
         ai_model = OpenAIChatModel(
-            model or "default",
+            model or _DEFAULT_MODEL,
             provider=OpenAIProvider(
                 base_url=effective_url,
-                api_key=api_key or "not-needed",
+                api_key=api_key or _DEFAULT_API_KEY,
             ),
         )
         agent = Agent(ai_model)

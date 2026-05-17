@@ -136,8 +136,8 @@ async def main(base_url: str, llm_url: str, llm_model: str, llm_api_key: str) ->
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stow agent chat")
     parser.add_argument("--base-url", default="http://localhost:8000", help="Backend API URL")
-    parser.add_argument("--llm-url", default=os.environ.get("STOW_LLM_BASE_URL", "http://localhost:11434/v1"), help="LLM base URL (no normalization applied)")
-    parser.add_argument("--llm-model", default=os.environ.get("STOW_LLM_MODEL", ""), help="LLM model name")
-    parser.add_argument("--llm-api-key", default=os.environ.get("STOW_LLM_API_KEY", "not-needed"), help="LLM API key")
+    parser.add_argument("--llm-url", default=os.environ.get("STOW_LLM_BASE_URL", "http://localhost:8001/v1"), help="LLM base URL (no normalization applied)")
+    parser.add_argument("--llm-model", default=os.environ.get("STOW_LLM_MODEL", "Qwen3.6-35B-A3B-MLX-VL-oQ4-FP16"), help="LLM model name")
+    parser.add_argument("--llm-api-key", default=os.environ.get("STOW_LLM_API_KEY", "omlx"), help="LLM API key")
     args = parser.parse_args()
     asyncio.run(main(args.base_url, args.llm_url, args.llm_model, args.llm_api_key))

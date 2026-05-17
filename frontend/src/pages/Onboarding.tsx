@@ -354,9 +354,9 @@ function StepOpeningBalances({ accounts, fyId, fyStartDate, onNext, onSkip }: {
 type ConnStatus = 'idle' | 'loading' | 'ok' | 'fail'
 
 function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: () => void }) {
-  const [baseUrl, setBaseUrl] = useState('http://localhost:11434/v1')
-  const [model, setModel] = useState('qwen3:30b')
-  const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState('http://localhost:8001/v1')
+  const [model, setModel] = useState('Qwen3.6-35B-A3B-MLX-VL-oQ4-FP16')
+  const [apiKey, setApiKey] = useState('omlx')
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
   const [connMsg, setConnMsg] = useState('Not tested')
   const [saving, setSaving] = useState(false)
@@ -410,7 +410,7 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
             onChange={e => setBaseUrl(e.target.value)}
           />
           <p className="text-xs text-zinc-400 mt-1">
-            Ollama: <code className="font-mono">http://localhost:11434/v1</code> · oMLX: <code className="font-mono">http://localhost:10240/v1</code>
+            oMLX: <code className="font-mono">http://localhost:8001/v1</code> · Ollama: <code className="font-mono">http://localhost:11434/v1</code>
           </p>
         </div>
         <div>
@@ -427,7 +427,7 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
         </div>
         <div>
           <label className="block text-xs font-medium text-zinc-600 mb-1">
-            API key <span className="text-zinc-400 font-normal">(optional — leave blank for Ollama)</span>
+            API key <span className="text-zinc-400 font-normal">(oMLX uses <code className="font-mono">omlx</code>)</span>
           </label>
           <input
             type="password"
