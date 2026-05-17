@@ -19,6 +19,7 @@ from stow.routers import scheduler as scheduler_router
 from stow.routers import ai as ai_router
 from stow.routers import imports as imports_router
 from stow.routers import merchant_rules as merchant_rules_router
+from stow.routers import chat as chat_router
 from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
 
@@ -61,6 +62,7 @@ app.include_router(scheduler_router.router)
 app.include_router(ai_router.router)
 app.include_router(imports_router.router)
 app.include_router(merchant_rules_router.router)
+app.include_router(chat_router.router)
 
 
 @app.get("/health")
