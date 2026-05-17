@@ -158,25 +158,50 @@ All reports are generated server-side and exportable as PDF.
 
 ## AI Features
 
-### Natural Language Entry
+### Conversational Agent Architecture
+All user-facing AI interactions flow through a **multi-agent system**:
+
+- **Orchestrator** (`backend/src/agent/orchestrator.py`) — the top-level pydantic_ai agent. Receives all user messages (text, images, PDF references), classifies intent, and delegates to specialised subagents.
+- **Subagents** (`backend/src/agent/subagents/`) — each is a focused pydantic_ai agent with its own tool set:
+  | Subagent | Responsibility |
+  |---|---|
+  | `transaction` | NL → create / query / edit / delete transactions |
+  | `account` | Create / query / archive accounts |
+  | `import_agent` | Bank statement staging row review and bulk confirmation |
+  | `investment` | FD, equity MF, stock buy/sell, portfolio queries |
+  | `recurring` | Create / confirm / skip recurring schedules |
+  | `report` | P&L, balance sheet, cash flow, capital gains queries |
+
+### Transport Layers
+- **WebSocket** (`backend/src/agent/transport/websocket.py`) — web chat, real-time token streaming, handles text / image (`BinaryContent`) / PDF uploads. PDFs are pre-uploaded to `POST /imports` before the orchestrator sees them; orchestrator receives `[IMPORT_BATCH:{id}:{filename}]`.
+- **Telegram** (`backend/src/agent/transport/telegram/`) — same orchestrator, separate entry point. Handles photo messages as `BinaryContent` for vision, PDF documents as import batches.
+
+### Natural Language Transaction Entry
 - User types a loose narrative: "paid electricity bill 2400 from HDFC last Tuesday"
-- LLM infers date, amount, voucher type, and account mappings
-- Proposed transaction is shown for review and confirmation before posting
+- Orchestrator delegates to transaction subagent; LLM infers date, amount, voucher type, and account mappings
+- A **Proposal Card** is shown for review and confirmation before posting
 - Never auto-posts without user confirmation
 
-### Bank Statement Import
-- Supports PDF (text extraction via pdfplumber/pymupdf → LLM parsing) and CSV
-- Supported banks: Axis Bank, HDFC, Bank of India, AU Small Finance Bank, Union Bank of India (both bank and credit card statements)
-- Parsed rows land in a staging area
-- LLM suggests matches against existing transactions (duplicate detection by amount + date proximity)
-- User confirms matches and new entries before posting
-- Mark-and-match reconciliation: matched rows are marked reconciled
+### UPI Screenshot (Vision)
+- User sends a UPI payment screenshot via web chat or Telegram
+- Orchestrator passes `BinaryContent` to the LLM vision model
+- LLM extracts: merchant name, amount, reference number
+- `_get_merchant_rules` tool called to pre-fill payee account from saved merchant rules
+- Proposal Card shown; user confirms to post
+
+### Bank Statement PDF Import
+- Supported: PDF only (text extraction via pdfplumber/pymupdf → LLM parsing)
+- Supported banks: Axis Bank, HDFC, Bank of India, AU Small Finance Bank, Union Bank of India (bank and credit card statements)
+- User attaches PDF in web chat or Telegram → transport layer uploads to `POST /imports` → batch created with staging rows
+- Orchestrator receives `[IMPORT_BATCH:{id}:{filename}]` and delegates to `import_agent`
+- `import_agent` resolves bank account and FY using `_list_accounts` / `_get_active_fy` tools; guides user through row-by-row review
+- Merchant rules applied automatically; AI suggests accounts for unmapped rows
+- User confirms batch → `POST /imports/{id}/confirm` → bulk transaction creation
 
 ### Merchant Rules
-- When a user overrides an AI-suggested account mapping, they are asked "always map this merchant to X?"
-- Confirmed rules are saved to a **Merchant Rule** table (merchant pattern → account)
-- On future imports, saved rules are applied first; AI fills remaining unmapped rows
-- Rules can be managed (viewed, edited, deleted) from settings
+- Saved mappings from merchant name pattern (substring, case-insensitive, supports `*` wildcard) → account
+- Applied automatically during imports and UPI screenshot processing
+- Managed from Settings → Merchant Rules (view, edit, delete, undo-on-delete toast)
 
 ### Background Scheduler
 - APScheduler 4.x running in the FastAPI process, timezone: Asia/Kolkata (IST)
@@ -186,7 +211,9 @@ All reports are generated server-side and exportable as PDF.
 ### AI Stack
 - Any OpenAI-compatible local inference server (oMLX, Ollama, LM Studio, vLLM, etc.)
 - LLM client: `pydantic_ai.Agent` wrapping the OpenAI-compatible inference server
-- Configured via `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL` environment variables
+- LLM config stored in DB and editable at runtime via Settings → AI / LLM (no restart required)
+- `normalize_base_url()` in `backend/src/stow/ai_config.py` rewrites `localhost` → `host.docker.internal` for Docker
+- Configured via `STOW_LLM_BASE_URL` and `STOW_LLM_MODEL` environment variables (overridden by DB config if set)
 - No external API calls — all inference is on-device
 
 ## Telegram Bot
@@ -238,43 +265,37 @@ idle → parsing → reviewing → editing → confirming → posted
 - TTL: 10 minutes of inactivity
 - On timeout or restart: state is lost, user starts fresh
 
-### Key Endpoints
-
-| Endpoint | Method | Purpose |
-|---|---|---|
-| `/ai/parse-transaction` | POST | Parse natural language → transaction |
-| `/ai/process-image` | POST | Process UPI screenshot → extracted fields |
-| `/ai/test-connection` | POST | Check LLM connectivity |
-| `/financial-years` | GET | Get active FY |
-| `/accounts` | GET | Get all active accounts |
-| `/transactions` | POST | Create transaction |
-| `/imports/staging` | GET | Get staging rows |
-| `/imports/staging/{id}/confirm` | POST | Confirm staging row |
-| `/recurring/queue` | GET | Get today's due queue |
-
 ### File Structure
 
 ```
-backend/src/stow/
-├── telegram_bot/
-│   ├── __init__.py          # Bot initialization, dispatcher
-│   ├── bot.py               # aiogram Bot instance, long-polling setup
-│   ├── router.py            # Intent classification (entry/query/import/investment/other)
-│   ├── state.py             # In-memory state machine (BotState class, TTL)
-│   ├── handlers/
-│   │   ├── start.py         # /start handler — map telegram_user_id → user_id
-│   │   ├── text.py          # Free text handler — parse → propose → confirm
-│   │   ├── image.py         # Image handler — forward image → vision extract → propose
-│   │   ├── edit.py          # Inline keyboard edit handler — field selection, value update
-│   │   ├── import_handler.py # /import handler — upload PDF → parse → auto-confirm
-│   │   ├── recurring.py     # /recurring handler — daily digest, confirm/skip
-│   │   └── query.py         # Query handler — one-line answer, breakdown/report buttons
-│   ├── proposals.py         # Proposal card builder — format transaction for display
-│   ├── keyboards.py         # Inline keyboard builders — edit buttons, confirm/edit/decline
-│   ├── queries.py           # Backend query helpers — fetch accounts, FY, recent txns
-│   └── utils.py             # Shared utilities — retry logic, formatting
-├── routers/
-│   └── ai.py                # New: POST /ai/process-image endpoint
+backend/src/
+├── agent/
+│   ├── orchestrator.py            # Top-level pydantic_ai agent; routes to subagents
+│   ├── deps.py                    # Shared dependency injection (DB session, HTTP client)
+│   ├── subagents/
+│   │   ├── transaction.py         # NL → create/query/edit/delete transactions
+│   │   ├── account.py             # Create/query/archive accounts
+│   │   ├── import_agent.py        # PDF staging row review and bulk confirmation
+│   │   ├── investment.py          # FD, equity MF, stock buy/sell, portfolio
+│   │   ├── recurring.py           # Create/confirm/skip recurring schedules
+│   │   └── report.py              # P&L, BS, cash flow, capital gains queries
+│   └── transport/
+│       ├── websocket.py           # Web chat — streaming WebSocket, image/PDF pre-upload
+│       ├── proposal.py            # Proposal card formatter (shared across transports)
+│       └── telegram/
+│           ├── bot.py             # aiogram Bot instance + dispatcher setup
+│           ├── handlers.py        # All Telegram event handlers (text, photo, document, commands)
+│           └── keyboard.py        # Inline keyboard builders (Confirm/Decline/Edit)
+└── stow/
+    ├── routers/                   # FastAPI route modules (one per domain)
+    ├── models.py                  # SQLModel ORM models
+    ├── ai_config.py               # LLM config load/save + normalize_base_url()
+    ├── import_pipeline.py         # PDF parsing → staging rows
+    ├── import_parsers.py          # Per-bank PDF parsers
+    ├── recurring.py               # Queue generation logic
+    ├── scheduler.py               # APScheduler job definitions
+    ├── reports/                   # Report generation + PDF export
+    └── investments/               # FD, lot tracking, capital gains, prices
 ```
 
 ## Technology Stack
@@ -297,10 +318,16 @@ backend/src/stow/
 ```
 stow/
 ├── frontend/          # Vite + React SPA
+│   └── src/
+│       ├── pages/     # Dashboard, Transactions, Accounts, Reports, Portfolio, Settings, Onboarding
+│       └── components/# Sidebar, ChatSidebar, TransactionEntrySheet, ProposalCard, AccountSheet, …
 ├── backend/           # FastAPI application
-│   └── src/stow/      # Python package
+│   └── src/
+│       ├── agent/     # Orchestrator + subagents + transport layers (WebSocket, Telegram)
+│       └── stow/      # FastAPI app, routers, models, reports, investments, scheduler
 ├── docs/
 │   └── adr/           # Architecture Decision Records
+├── QA_CHECKLIST.md    # Comprehensive manual QA checklist (all user-facing features)
 ├── docker-compose.yml
 └── CONTEXT.md
 ```
