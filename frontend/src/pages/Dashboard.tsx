@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, Plus, Bell, Clock, Sparkles, Repeat, Receipt } from 'lucide-react'
+import { ChevronDown, Plus, Bell, Clock, Repeat, Receipt } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
 import { TxnBadge, type TxnType } from '../components/TxnBadge'
 import { EmptyState } from '../components/EmptyState'
-import { TransactionEntrySheet, type TransactionDraft } from '../components/TransactionEntrySheet'
+import { TransactionEntrySheet } from '../components/TransactionEntrySheet'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -61,15 +61,6 @@ interface QueueItemOut {
   due_date: string
   status: string
   posted_transaction_id: number | null
-}
-
-interface ParsedTxn {
-  type: string
-  date: string
-  amount: number
-  narration: string
-  from_account?: string
-  to_account?: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -170,85 +161,17 @@ function ZoneToggle({
 
 // ── Zone 1: Entry ──────────────────────────────────────────────────────────
 
-function EntryZone({
-  open,
-  onOpen,
-  onClose,
-  text,
-  onTextChange,
-  onInterpret,
-  onManual,
-  loading,
-  error,
-}: {
-  open: boolean
-  onOpen: () => void
-  onClose: () => void
-  text: string
-  onTextChange: (v: string) => void
-  onInterpret: () => void
-  onManual: () => void
-  loading: boolean
-  error: boolean
-}) {
+function EntryZone({ onManual }: { onManual: () => void }) {
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-      {!open ? (
-        <div
-          className="px-5 py-4 cursor-text"
-          onClick={onOpen}
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-              <Plus className="w-4 h-4 text-blue-600" />
-            </div>
-            <span className="text-zinc-400 text-sm">What happened? Record a transaction…</span>
+      <div className="px-5 py-4 cursor-pointer" onClick={onManual}>
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
+            <Plus className="w-4 h-4 text-blue-600" />
           </div>
+          <span className="text-zinc-400 text-sm">New transaction…</span>
         </div>
-      ) : (
-        <div className="px-5 pt-5 pb-4">
-          <label className="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
-            What happened?
-          </label>
-          <textarea
-            autoFocus
-            rows={3}
-            value={text}
-            onChange={e => onTextChange(e.target.value)}
-            className="w-full resize-none border border-zinc-200 rounded-xl p-3.5 text-sm text-zinc-800 placeholder-zinc-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition font-sans"
-            placeholder="e.g. paid electricity bill ₹2400 from HDFC last Tuesday"
-          />
-          {error && (
-            <p className="text-xs text-red-500 mt-1.5">
-              Hmm, I got a bit confused. Could you be a little more specific?
-            </p>
-          )}
-          <div className="flex items-center justify-between mt-3">
-            <button
-              onClick={onClose}
-              className="text-xs text-zinc-400 hover:text-zinc-600 transition-colors"
-            >
-              Cancel
-            </button>
-            <div className="flex gap-2">
-              <button
-                onClick={onManual}
-                className="text-xs text-zinc-500 border border-zinc-200 hover:border-zinc-300 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                Manual entry
-              </button>
-              <button
-                onClick={onInterpret}
-                disabled={!text.trim() || loading}
-                className="flex items-center gap-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg transition-colors"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                {loading ? 'Thinking…' : 'Interpret'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -459,9 +382,7 @@ function RecentZone({
 
 export default function Dashboard() {
   const qc = useQueryClient()
-  const [openZone, setOpenZone] = useState<'entry' | 'attention' | 'recent' | null>(null)
-  const [nlText, setNlText] = useState('')
-  const [parsedTxn, setParsedTxn] = useState<ParsedTxn | null>(null)
+  const [openZone, setOpenZone] = useState<'attention' | 'recent' | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const toggle = (zone: 'attention' | 'recent') =>
@@ -494,16 +415,6 @@ export default function Dashboard() {
     queryFn: () => api.get<FdListItemOut[]>('/investments/fds/maturing-soon?days=30'),
   })
 
-  // Parse mutation
-  const parseMutation = useMutation({
-    mutationFn: (text: string) => api.post<ParsedTxn>('/ai/parse-transaction', { text }),
-    onSuccess: data => {
-      setParsedTxn(data)
-      setSheetOpen(true)
-      setOpenZone(null)
-    },
-  })
-
   // Computed
   const netWorth = computeNetWorth(accounts)
   const { amount: cashAmount, count: bankCount } = computeCash(accounts)
@@ -532,18 +443,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Zone 1 — What happened? */}
-      <EntryZone
-        open={openZone === 'entry'}
-        onOpen={() => setOpenZone('entry')}
-        onClose={() => setOpenZone(null)}
-        text={nlText}
-        onTextChange={setNlText}
-        onInterpret={() => parseMutation.mutate(nlText)}
-        onManual={() => setSheetOpen(true)}
-        loading={parseMutation.isPending}
-        error={parseMutation.isError}
-      />
+      {/* Zone 1 — New transaction */}
+      <EntryZone onManual={() => setSheetOpen(true)} />
 
       {/* Zone 2 — Needs attention */}
       <AttentionZone
@@ -579,17 +480,10 @@ export default function Dashboard() {
       {/* Transaction entry sheet */}
       <TransactionEntrySheet
         open={sheetOpen}
-        onClose={() => { setSheetOpen(false); setParsedTxn(null) }}
-        prefill={parsedTxn ? ({
-          type: parsedTxn.type as TransactionDraft['type'],
-          narration: parsedTxn.narration,
-          date: parsedTxn.date,
-          amountRupees: parsedTxn.amount > 0 ? String(parsedTxn.amount / 100) : '',
-        } satisfies Partial<TransactionDraft>) : undefined}
+        onClose={() => setSheetOpen(false)}
         onSaved={() => {
           qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
           qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
-          setParsedTxn(null)
         }}
       />
     </div>

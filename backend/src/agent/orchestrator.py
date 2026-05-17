@@ -1,9 +1,22 @@
 from __future__ import annotations
 
-from pydantic_ai import Agent
+from datetime import datetime
+
+from pydantic_ai import Agent, RunContext
 from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
 from agent.deps import StowDeps
+
+
+async def _get_current_datetime(ctx: RunContext[StowDeps]) -> dict:
+    """Return the current date and time. Call this whenever you need to know today's date."""
+    now = datetime.now()
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "day": now.strftime("%A"),
+        "display": now.strftime("%d %b %Y"),
+        "time": now.strftime("%H:%M"),
+    }
 from agent.subagents.account import build_account_agent
 from agent.subagents.import_agent import build_import_agent
 from agent.subagents.investment import build_investment_agent
@@ -43,6 +56,25 @@ Then pass the extracted details to transaction_agent as structured input.
 - Financial reports (trial balance, P&L, balance sheet, cash flow, balances, spending) → report_agent
 - Investments (FDs, MFs, stocks, capital gains, portfolio) → investment_agent
 - Recurring transactions → recurring_agent
+
+## Proposal cards
+When transaction_agent returns a parsed transaction proposal, emit a PROPOSAL line
+as the very first line of your response, followed by the human-readable card:
+
+PROPOSAL:{"type":"<type>","date":"<ISO date>","amount_paise":<int>,"narration":"<text>","from_account_id":<int>,"from_account_name":"<name>","to_account_id":<int>,"to_account_name":"<name>","fy_id":<int>}
+
+Then show the card and ask the user to confirm, edit, or decline.
+Example card:
+  💸 Payment · ₹500.00
+  📅 16 May 2026
+  HDFC Bank → Electricity
+  Narration: Electricity bill
+
+  Reply "confirm" to post, "decline" to discard, or describe a change.
+
+On "confirm": call create_transaction and reply with the transaction number.
+On "decline": reply with a friendly cancellation message.
+On an edit request: update the relevant field, re-emit the PROPOSAL line, and re-render the card.
 
 ## Formatting
 - Amounts: always display as ₹X,XX,XXX (Indian comma format)
@@ -119,6 +151,7 @@ def build_orchestrator() -> Agent[StowDeps, str]:
         model=model,
         deps_type=StowDeps,
         instructions=_SYSTEM_PROMPT,
+        tools=[_get_current_datetime],
         capabilities=[
             SubAgentCapability(
                 subagents=subagent_configs,
