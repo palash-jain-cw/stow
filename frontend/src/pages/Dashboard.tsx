@@ -347,7 +347,12 @@ function RecentZone({
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-xs text-zinc-400 w-12 shrink-0">{formatDate(txn.date)}</span>
-                        <span className="text-sm text-zinc-800 truncate">{txn.narration}</span>
+                        <div className="min-w-0">
+                          <p className="text-sm text-zinc-800 truncate">{txn.narration}</p>
+                          <p className="text-xs text-zinc-400 truncate">
+                            {txn.entries.find((e: EntryOut) => e.amount > 0)?.account_name ?? txn.entries[0]?.account_name ?? '—'}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0 ml-3">
                         <TxnBadge type={txn.type as TxnType} />

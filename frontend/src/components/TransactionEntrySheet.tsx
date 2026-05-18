@@ -570,10 +570,10 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
   const journalCr = journalEntries.reduce((s, e) => s + rupeesToPaise(e.cr), 0)
   const journalBalanced = draft.type === 'journal' ? (journalDr > 0 && journalDr === journalCr) : true
 
-  // canSave: for non-journal, only check amount (not narration)
+  const hasNarration = !!draft.narration.trim()
   const canSave = draft.type === 'journal'
-    ? journalBalanced
-    : !!draft.amountRupees && parseFloat(draft.amountRupees) > 0
+    ? journalBalanced && hasNarration
+    : !!draft.amountRupees && parseFloat(draft.amountRupees) > 0 && hasNarration
 
   const handleSave = () => {
     // Validate accounts for non-journal types
@@ -630,6 +630,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
           narration: draft.narration,
           date: draft.date,
           tags: draft.tags.length ? draft.tags : null,
+          entries,
         })
       } else {
         txn = await api.post<TransactionOut>('/transactions', body)
@@ -716,12 +717,12 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
             {/* Narration */}
             <div>
               <FieldLabel>Narration</FieldLabel>
-              <input
-                type="text"
+              <textarea
+                rows={2}
                 placeholder="What was this for?"
                 value={draft.narration}
                 onChange={e => set('narration', e.target.value)}
-                className={inputCls()}
+                className={inputCls() + ' resize-none'}
               />
             </div>
 
@@ -865,12 +866,12 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
           <>
             <div>
               <FieldLabel>Narration</FieldLabel>
-              <input
-                type="text"
+              <textarea
+                rows={2}
                 placeholder="What is this journal entry for?"
                 value={draft.narration}
                 onChange={e => set('narration', e.target.value)}
-                className={inputCls()}
+                className={inputCls() + ' resize-none'}
               />
             </div>
             <div>

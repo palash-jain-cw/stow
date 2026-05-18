@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -111,7 +112,30 @@ function primaryAccount(txn: TransactionOut): string {
 
 // ── Audit log ─────────────────────────────────────────────────────────────
 
-function AuditLog({ txnId }: { txnId: number }) {
+type Snap = Record<string, unknown>
+
+function snapAmount(snap: Snap): number {
+  const entries = snap.entries as Array<{ amount: number }> | undefined
+  return entries?.reduce((s, e) => s + Math.max(0, e.amount), 0) ?? 0
+}
+
+function diffSnaps(before: Snap, after: Snap | TransactionOut): string[] {
+  const changes: string[] = []
+  const a = after as Snap
+  if (before.narration !== a.narration)
+    changes.push(`Narration: "${before.narration}" → "${a.narration}"`)
+  if (before.date !== a.date)
+    changes.push(`Date: ${before.date} → ${a.date}`)
+  const bAmt = snapAmount(before)
+  const aAmt = snapAmount(a)
+  if (bAmt !== aAmt)
+    changes.push(`Amount: ₹${(bAmt / 100).toLocaleString('en-IN')} → ₹${(aAmt / 100).toLocaleString('en-IN')}`)
+  if (JSON.stringify(before.tags) !== JSON.stringify(a.tags))
+    changes.push(`Tags: ${JSON.stringify(before.tags) ?? 'none'} → ${JSON.stringify(a.tags) ?? 'none'}`)
+  return changes
+}
+
+function AuditLog({ txnId, txn }: { txnId: number; txn: TransactionOut }) {
   const [open, setOpen] = useState(false)
   const { data: log, isLoading } = useQuery({
     queryKey: ['transactions', txnId, 'audit-log'],
@@ -143,12 +167,21 @@ function AuditLog({ txnId }: { txnId: number }) {
         <p className="text-xs text-zinc-400">No edits recorded.</p>
       )}
       {log && log.length > 0 && (
-        <div className="space-y-1.5">
-          {log.map(entry => (
-            <div key={entry.id} className="text-xs text-zinc-400">
-              Edited {formatAuditTime(entry.edited_at)}
-            </div>
-          ))}
+        <div className="space-y-2">
+          {log.map((entry, i) => {
+            const afterSnap: Snap | TransactionOut = log[i + 1] ? log[i + 1].snapshot : txn
+            const changes = diffSnaps(entry.snapshot, afterSnap)
+            return (
+              <div key={entry.id} className="text-xs text-zinc-400">
+                <span>Edited {formatAuditTime(entry.edited_at)}</span>
+                {changes.length > 0 && (
+                  <ul className="mt-1 ml-3 space-y-0.5 text-zinc-500">
+                    {changes.map((c, j) => <li key={j}>· {c}</li>)}
+                  </ul>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -218,7 +251,7 @@ function ExpandedPanel({
         </div>
       </div>
 
-      <AuditLog txnId={txn.id} />
+      <AuditLog txnId={txn.id} txn={txn} />
     </div>
   )
 }
@@ -292,6 +325,8 @@ function FilterBar({
   onPeriod,
   activeTypes,
   onTypes,
+  hasFilters,
+  onClear,
 }: {
   search: string
   onSearch: (s: string) => void
@@ -299,6 +334,8 @@ function FilterBar({
   onPeriod: (p: PeriodKey) => void
   activeTypes: string[]
   onTypes: (t: string[]) => void
+  hasFilters: boolean
+  onClear: () => void
 }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -344,6 +381,16 @@ function FilterBar({
             </button>
           ))}
         </div>
+
+        {/* Clear all filters */}
+        {hasFilters && (
+          <button
+            onClick={onClear}
+            className="text-xs px-3 py-1.5 rounded-lg border border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700 transition-all"
+          >
+            Clear all
+          </button>
+        )}
 
         {/* Filters button */}
         <div ref={ref} className="relative">
@@ -442,14 +489,34 @@ function DeleteConfirm({
 
 export default function Transactions() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editTxn, setEditTxn] = useState<TransactionOut | undefined>()
   const [expandedId, setExpandedId] = useState<number | null>(null)
-  const [search, setSearch] = useState('')
-  const [period, setPeriod] = useState<PeriodKey>('all')
-  const [activeTypes, setActiveTypes] = useState<string[]>([])
   const [deleteTarget, setDeleteTarget] = useState<TransactionOut | null>(null)
+
+  // Auto-open new transaction sheet when navigated here with ?new=1
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setSheetOpen(true)
+      setSearchParams(prev => { const n = new URLSearchParams(prev); n.delete('new'); return n }, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
+
+  // Filter state persisted in URL
+  const search = searchParams.get('q') ?? ''
+  const period = (searchParams.get('period') ?? 'all') as PeriodKey
+  const activeTypes = searchParams.get('types')?.split(',').filter(Boolean) ?? []
+
+  const setSearch = (s: string) =>
+    setSearchParams(prev => { const n = new URLSearchParams(prev); s ? n.set('q', s) : n.delete('q'); return n }, { replace: true })
+  const setPeriod = (p: PeriodKey) =>
+    setSearchParams(prev => { const n = new URLSearchParams(prev); p !== 'all' ? n.set('period', p) : n.delete('period'); return n }, { replace: true })
+  const setActiveTypes = (types: string[]) =>
+    setSearchParams(prev => { const n = new URLSearchParams(prev); types.length ? n.set('types', types.join(',')) : n.delete('types'); return n }, { replace: true })
+  const clearFilters = () =>
+    setSearchParams(prev => { const n = new URLSearchParams(prev); ['q', 'period', 'types'].forEach(k => n.delete(k)); return n }, { replace: true })
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: queryKeys.transactions.list(),
@@ -479,9 +546,12 @@ export default function Transactions() {
     })
   }, [txns, search, period, activeTypes])
 
-  // Group by date descending
+  // Group by date descending; within each date, newest transaction first
   const grouped = useMemo(() => {
-    const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
+    const sorted = [...filtered].sort((a, b) => {
+      const d = b.date.localeCompare(a.date)
+      return d !== 0 ? d : b.id - a.id
+    })
     const map = new Map<string, TransactionOut[]>()
     for (const txn of sorted) {
       const list = map.get(txn.date) ?? []
@@ -529,6 +599,8 @@ export default function Transactions() {
           onPeriod={setPeriod}
           activeTypes={activeTypes}
           onTypes={setActiveTypes}
+          hasFilters={hasFilters}
+          onClear={clearFilters}
         />
       </div>
 

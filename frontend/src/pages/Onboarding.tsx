@@ -109,11 +109,6 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
         Let's get you set up in about 2 minutes.
       </p>
       <PrimaryButton onClick={onNext}>Get started →</PrimaryButton>
-      <div className="text-center mt-4">
-        <Link to="/" className="text-xs text-zinc-400 hover:text-zinc-600">
-          Already set up? Skip →
-        </Link>
-      </div>
     </StepCard>
   )
 }
@@ -205,10 +200,17 @@ function StepBankAccounts({ onNext, onSkip }: {
   const removeRow = (i: number) =>
     setBankNames(prev => prev.filter((_, j) => j !== i))
 
+  const [dupError, setDupError] = useState('')
+
   const handleContinue = async () => {
     const bankGroup = groups.find(g => g.name === 'Bank Accounts')
     const cashGroup = groups.find(g => g.name === 'Cash-in-Hand')
     if (!bankGroup) return
+
+    const trimmed = bankNames.map(n => n.trim()).filter(Boolean)
+    const dupes = trimmed.filter((n, i) => trimmed.findIndex(m => m.toLowerCase() === n.toLowerCase()) !== i)
+    if (dupes.length) { setDupError(`Duplicate name: "${dupes[0]}"`); return }
+    setDupError('')
 
     setSaving(true)
     try {
@@ -274,6 +276,7 @@ function StepBankAccounts({ onNext, onSkip }: {
         <span className="text-sm text-zinc-600">I also keep cash (add a Cash-in-Hand account)</span>
       </label>
 
+      {dupError && <p className="text-xs text-red-500 mb-2">{dupError}</p>}
       <PrimaryButton onClick={handleContinue} disabled={!hasAny || saving}>
         {saving ? 'Creating accounts…' : 'Continue'}
       </PrimaryButton>
@@ -500,7 +503,7 @@ function StepDone({ fyLabel: fy, accountCount, llmModel, onFinish }: {
             Go to dashboard
           </button>
           <button
-            onClick={() => onFinish('/transactions')}
+            onClick={() => onFinish('/transactions?new=1')}
             className="block w-full py-2.5 border border-zinc-200 text-zinc-700 rounded-xl font-medium hover:bg-zinc-50 transition-colors text-center text-sm"
           >
             Enter first transaction
@@ -566,7 +569,7 @@ export default function Onboarding() {
   const skipAi = () => setStep(6)
 
   // Await invalidation before navigating so RequireSetup sees the new FY in cache
-  const onFinish = async (dest: '/' | '/transactions') => {
+  const onFinish = async (dest: string) => {
     await qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
     navigate(dest, { replace: true })
   }

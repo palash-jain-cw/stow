@@ -11,129 +11,158 @@
 > Entry point for new users. Navigate to the app with no existing data.
 
 ### 1.1 Welcome Screen
-- [ ] Welcome screen renders on first load (no existing FY)
-- [ ] "Skip to home" link works and lands on Dashboard
-- [ ] "Get started" button advances to Step 2
+- [x] Welcome screen renders on first load (no existing FY)
+- [x] "Skip to home" link works and lands on Dashboard
+  - This does not work. Nothing happens on clicking it
+  - Update: This link has now been removed, so this item is no longer applicable
+- [x] "Get started" button advances to Step 2
 
 ### 1.2 Financial Year Selection (Step 2)
-- [ ] Three year options are displayed with correct date ranges
-- [ ] Current FY is marked with a "Current" badge
-- [ ] Selecting a year and clicking Next advances to Step 3
-- [ ] Selected year is visually highlighted
+- [x] Three year options are displayed with correct date ranges
+- [x] Current FY is marked with a "Current" badge
+- [x] Selecting a year and clicking Next advances to Step 3
+- [x] Selected year is visually highlighted
 
 ### 1.3 Bank Accounts Entry (Step 3)
-- [ ] At least one account row is shown by default
-- [ ] "Add another account" adds a new input row
-- [ ] Removing a row removes it from the list (not allowed if only one remains)
-- [ ] "Cash-in-hand" checkbox creates a cash account
-- [ ] Account names are required — blank names show validation error
-- [ ] Duplicate account names show an error
-- [ ] Clicking Next with valid accounts advances to Step 4
+- [x] At least one account row is shown by default
+- [x] "Add another account" adds a new input row
+- [x] Removing a row removes it from the list (not allowed if only one remains)
+- [x] "Cash-in-hand" checkbox creates a cash account
+- [x] Account names are required — blank names show validation error
+- [x] Duplicate account names show an error
+  - I am able to add duplicate account names
+  - Update: Fixed
+- [x] Clicking Next with valid accounts advances to Step 4
 
 ### 1.4 Opening Balances (Step 4)
-- [ ] All accounts created in Step 3 appear as rows
-- [ ] Amount inputs accept numeric values
-- [ ] Blank/zero values are accepted (optional balances)
-- [ ] Amounts display with ₹ symbol
-- [ ] Clicking Next saves balances and advances to Step 5
+- [x] All accounts created in Step 3 appear as rows
+- [x] Amount inputs accept numeric values
+- [x] Blank/zero values are accepted (optional balances)
+- [x] Amounts display with ₹ symbol
+- [x] Clicking Next saves balances and advances to Step 5
 
 ### 1.5 AI / LLM Configuration (Step 5)
-- [ ] Server URL, Model name, and API key fields are present
-- [ ] "Test connection" button tests the current inputs
-- [ ] Success state shows green indicator with latency
-- [ ] Failure state shows red indicator with error hint
-- [ ] "Skip" advances to Step 6 without saving
-- [ ] Saving and continuing advances to Step 6
+- [x] Server URL, Model name, and API key fields are present
+- [x] "Test connection" button tests the current inputs
+- [x] Success state shows green indicator with latency
+- [x] Failure state shows red indicator with error hint
+- [x] "Skip" advances to Step 6 without saving
+- [x] Saving and continuing advances to Step 6
 
 ### 1.6 Completion Summary (Step 6)
-- [ ] FY dates shown correctly
-- [ ] Account count matches what was created
-- [ ] AI status reflects whether config was saved or skipped
-- [ ] "Go to dashboard" navigates to `/`
-- [ ] "Enter first transaction" opens the transaction entry sheet
+- [x] FY dates shown correctly
+- [x] Account count matches what was created
+- [x] AI status reflects whether config was saved or skipped
+- [x] "Go to dashboard" navigates to `/`
+- [x] "Enter first transaction" opens the transaction entry sheet
+  - It just opens the transactions list
+  - Update: Fixed
 
 ---
 
 ## 2. Dashboard
 
 ### 2.1 Header & Financial Year Banner
-- [ ] Greeting changes with time of day (morning / afternoon / evening)
-- [ ] Active FY name and dates are displayed correctly
-- [ ] FY badge is visible and correctly styled
+- [x] Greeting changes with time of day (morning / afternoon / evening)
+- [x] Active FY name and dates are displayed correctly
+- [x] FY badge is visible and correctly styled
 
 ### 2.2 Summary Cards
-- [ ] Net worth = total assets − total liabilities (verify against manual calc)
-- [ ] Cash position shows sum of all bank + cash accounts
-- [ ] Values update after adding a transaction
+- [x] Net worth = total assets − total liabilities (verify against manual calc)
+- [x] Cash position shows sum of all bank + cash accounts
+- [x] Values update after adding a transaction
 
 ### 2.3 Needs Attention Zone
-- [ ] Section is collapsible and remembers state on reload
+- [x] Section is collapsible and remembers state on reload
 - [ ] **FD maturity alerts**: shows FDs maturing within 30 days with principal, rate, and days remaining
 - [ ] **Recurring due today**: shows all recurring transactions due today with narration and amount
 - [ ] **GST net payable**: shows correct GST liability net (output − input)
-- [ ] If nothing needs attention, section shows an empty/clear state (not a broken UI)
+- [x] If nothing needs attention, section shows an empty/clear state (not a broken UI)
 
 ### 2.4 Recent Activity Zone
-- [ ] Section is collapsible
+- [x] Section is collapsible
 - [ ] Shows last 10 transactions grouped by date (descending)
+    - This is just a list which is sorted by date not grouped by it
+    - Update: This is still not grouped by date. Just sorted. What is the expected behaviour
+    - Update: We went with a flat list sorted by date, so no longer applicable
 - [ ] Each row shows: type badge, narration, account, amount
-- [ ] "See all transactions" link navigates to `/transactions`
-- [ ] After deleting a transaction, the list refreshes
+    - Each row shows date, narration, type badge and amount
+    - Update: This still does not show account. What is the expected behaviour
+- [x] "See all transactions" link navigates to `/transactions`
 
 ### 2.5 Quick Entry
-- [ ] "New transaction" button opens the transaction entry sheet
-- [ ] Transaction created from dashboard appears in Recent Activity
+- [x] "New transaction" button opens the transaction entry sheet
+- [x] Transaction created from dashboard appears in Recent Activity
 
 ---
 
 ## 3. Transactions
 
 ### 3.1 Transaction List
-- [ ] All transactions load and are grouped by date (newest first)
-- [ ] Each row shows: type badge, narration, primary account, amount
-- [ ] Expanding a row shows the full Dr/Cr entry table, tags, transaction number
-- [ ] Edit and Delete buttons are visible in the expanded row
+- [x] All transactions load and are grouped by date (newest first)
+- [x] Each row shows: type badge, narration, primary account, amount
+- [x] Expanding a row shows the full Dr/Cr entry table, tags, transaction number
+- [x] Edit and Delete buttons are visible in the expanded row
 - [ ] Audit log section shows timestamped edit history (if the transaction has been edited)
+    - Cannot test as at the moment edit functionality is not working
+    - Update: I only see Updated on date, no details on what was updated
+    - Update: Fixed
 
 ### 3.2 Filters
-- [ ] **Search**: typing in narration search filters the list in real-time (case-insensitive)
-- [ ] **Period pills**: Today / This week / This month / Last month / This FY / All time — each filters correctly
-- [ ] **Type checkboxes**: Payment / Receipt / Journal / Contra — toggling filters the list
-- [ ] Combining search + period + type filters works (AND logic)
+- [x] **Search**: typing in narration search filters the list in real-time (case-insensitive)
+- [x] **Period pills**: Today / This week / This month / Last month / This FY / All time — each filters correctly
+- [x] **Type checkboxes**: Payment / Receipt / Journal / Contra — toggling filters the list
+- [x] Combining search + period + type filters works (AND logic)
 - [ ] Clearing all filters restores the full list
+    - Need a clear filter button
+    - Update: No clear  filter button available
 - [ ] Filter state persists across page refresh (or resets cleanly — document expected behavior)
+    - On refreshing the page, the filter resets to the default state
+    - Update: Filter state does not persist across page refresh
 
 ### 3.3 Creating a Transaction (Manual)
-- [ ] "New Transaction" button opens the entry sheet
-- [ ] Type dropdown offers: Payment, Receipt, Journal, Contra
-- [ ] Date picker defaults to today
-- [ ] Narration field is required — blank shows error
-- [ ] Account selectors (from/to) show searchable account list
-- [ ] Amount field accepts decimal (converts to paise internally)
-- [ ] Submitting creates the transaction and closes the sheet
-- [ ] New transaction appears at the top of the list
-- [ ] Transaction is assigned a unique sequential number
-- [ ] Tags field accepts free-form tags
+- [x] "New Transaction" button opens the entry sheet
+- [x] Type dropdown offers: Payment, Receipt, Journal, Contra
+    - These are pills to be selected not dropdown. This is okay
+- [x] Date picker defaults to today
+- [x] Narration field is required — blank shows error
+    - I can create a transaction without a narration
+    - Update:Fixed 
+- [x] Account selectors (from/to) show searchable account list
+- [x] Amount field accepts decimal (converts to paise internally)
+- [x] Submitting creates the transaction and closes the sheet
+- [x] New transaction appears at the top of the list
+    - It appears in the bottom of the date group it is in
+    - Update: Fixed
+- [x] Transaction is assigned a unique sequential number
+- [x] Tags field accepts free-form tags
 
 ### 3.4 Editing a Transaction
-- [ ] Edit button in expanded row opens the sheet pre-filled with existing data
-- [ ] All fields are editable
-- [ ] Saving the edit updates the transaction in the list
-- [ ] An audit log entry is created (visible in expanded row)
+- [x] Edit button in expanded row opens the sheet pre-filled with existing data
+- [x] All fields are editable
+- [x] Saving the edit updates the transaction in the list
+    - 422: {"detail":[{"type":"none_required","loc":["body","date"],"msg":"Input should be None","input":"2026-05-12"}]} on clicking update button
+    - Update: Fixed
+- [x] An audit log entry is created (visible in expanded row)
 - [ ] Editing amount correctly recalculates running balances in account ledgers
+  - I don't think the transaction is actually being edited. I changed the amount and it keeps showing the old amount. Updating Tags worked, amount did not.
 
 ### 3.5 Deleting a Transaction
-- [ ] Delete button shows a confirmation modal
-- [ ] Cancelling the modal keeps the transaction
-- [ ] Confirming deletes the transaction and removes it from the list
-- [ ] Deleted transaction no longer appears in account ledgers
-- [ ] Running balances in affected accounts update correctly
+- [x] Delete button shows a confirmation modal
+- [x] Cancelling the modal keeps the transaction
+- [x] Confirming deletes the transaction and removes it from the list
+    - While it does seem to delete on the backend, the frontend just shows the same popup of confirmation and keeps showing the transaction until manually refresehd
+    - Update: Fixed
+- [x] Deleted transaction no longer appears in account ledgers
+- [x] Running balances in affected accounts update correctly
 
 ### 3.6 Edge Cases
-- [ ] Transaction with zero amount is rejected
-- [ ] Entries that don't balance (Dr ≠ Cr) are rejected by the API
-- [ ] Very long narration renders without layout breaking
-- [ ] Transactions on FY boundary dates (first and last day) are accepted
+- [x] Transaction with zero amount is rejected
+- [x] Entries that don't balance (Dr ≠ Cr) are rejected by the API
+- [x] Very long narration renders without layout breaking
+    - It just keeps going on a single line. Should this be a text area with word-wrapping
+    - Update: Fixed
+- [x] Transactions on FY boundary dates (first and last day) are accepted
 
 ---
 

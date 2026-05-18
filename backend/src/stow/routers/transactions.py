@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date as _date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ class EntryIn(BaseModel):
 
 class TransactionIn(BaseModel):
     type: str
-    date: date
+    date: _date
     narration: str
     fy_id: int
     entries: list[EntryIn]
@@ -44,8 +44,8 @@ class TransactionOut(BaseModel):
     id: int
     number: str
     type: str
-    date: date
-    entry_date: date
+    date: _date
+    entry_date: _date
     narration: str
     fy_id: int
     tags: Optional[list] = None
@@ -140,8 +140,8 @@ def list_transactions(
     type: Optional[str] = None,
     account_id: Optional[int] = None,
     q: Optional[str] = None,
-    from_date: Optional[date] = None,
-    to_date: Optional[date] = None,
+    from_date: Optional[_date] = None,
+    to_date: Optional[_date] = None,
     session: Session = Depends(get_session),
 ):
     stmt = select(Transaction)
@@ -201,8 +201,9 @@ def delete_transaction(txn_id: int, session: Session = Depends(get_session)):
 
 class TransactionUpdate(BaseModel):
     narration: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[_date] = None
     tags: Optional[list[str]] = None
+    entries: Optional[list[EntryIn]] = None
 
 
 @router.put("/{txn_id}", response_model=TransactionOut)
@@ -220,16 +221,23 @@ def update_transaction(
         raise HTTPException(status_code=403, detail="Financial year is locked")
 
     # Snapshot before edit — use mode='json' so date/datetime become strings
-    entries = session.exec(select(Entry).where(Entry.transaction_id == txn_id)).all()
+    existing_entries = session.exec(select(Entry).where(Entry.transaction_id == txn_id)).all()
     snapshot = {
         **txn.model_dump(mode="json"),
-        "entries": [e.model_dump(mode="json") for e in entries],
+        "entries": [e.model_dump(mode="json") for e in existing_entries],
     }
-    audit = TransactionAuditLog(transaction_id=txn_id, snapshot=snapshot)
-    session.add(audit)
+    session.add(TransactionAuditLog(transaction_id=txn_id, snapshot=snapshot))
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    for field, value in data.model_dump(exclude_unset=True, exclude={"entries"}).items():
         setattr(txn, field, value)
+
+    if data.entries is not None:
+        _validate_balance(data.entries)
+        for entry in existing_entries:
+            session.delete(entry)
+        session.flush()
+        for entry_in in data.entries:
+            session.add(Entry(transaction_id=txn_id, account_id=entry_in.account_id, amount=entry_in.amount))
 
     session.commit()
     session.refresh(txn)
