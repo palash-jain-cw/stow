@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, Loader2, Pencil, Trash2 } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
@@ -846,11 +846,78 @@ function AiPanel() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+// ── Reset panel ───────────────────────────────────────────────────────────────
+
+function ResetPanel() {
+  const navigate = useNavigate()
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const doReset = async () => {
+    setBusy(true)
+    try {
+      await api.post('/reset', {})
+      navigate('/onboarding')
+    } finally {
+      setBusy(false)
+      setConfirm(false)
+    }
+  }
+
+  return (
+    <div>
+      <h2 className="text-base font-semibold text-zinc-900 mb-1">Danger Zone</h2>
+      <p className="text-sm text-zinc-500 mb-6">Destructive actions that cannot be undone.</p>
+
+      <div className="border border-red-200 rounded-xl p-5 bg-red-50">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold text-red-900">Reset app</p>
+            <p className="text-xs text-red-700 mt-1">
+              Wipes all transactions, accounts, financial years, imports, and rules.
+              Resets to factory state and opens onboarding. Your AI / LLM config is preserved.
+            </p>
+          </div>
+          <button
+            onClick={() => setConfirm(true)}
+            className="shrink-0 px-3 py-1.5 text-sm font-medium bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-100 transition-colors"
+          >
+            Reset app
+          </button>
+        </div>
+      </div>
+
+      <Modal open={confirm} onClose={() => setConfirm(false)} title="Reset app?">
+        <p className="text-sm text-zinc-700 mb-2">
+          This will permanently delete <strong>all your data</strong>:
+        </p>
+        <ul className="text-sm text-zinc-600 list-disc list-inside space-y-1 mb-4">
+          <li>All transactions and entries</li>
+          <li>All accounts and account groups</li>
+          <li>All financial years and opening balances</li>
+          <li>All imports, recurring schedules, and merchant rules</li>
+        </ul>
+        <p className="text-sm text-zinc-500">Your AI / LLM configuration will be preserved.</p>
+        <ModalActions
+          onCancel={() => setConfirm(false)}
+          onConfirm={doReset}
+          confirmLabel={busy ? 'Resetting…' : 'Yes, reset everything'}
+          confirmDisabled={busy}
+          danger
+        />
+      </Modal>
+    </div>
+  )
+}
+
+// ── Nav / shell ───────────────────────────────────────────────────────────────
+
 const PANELS = [
   { id: 'fy', label: 'Financial Years' },
   { id: 'recurring', label: 'Recurring' },
   { id: 'rules', label: 'Merchant Rules' },
   { id: 'ai', label: 'AI / LLM' },
+  { id: 'reset', label: 'Danger Zone' },
 ] as const
 
 type PanelId = typeof PANELS[number]['id']
@@ -872,9 +939,13 @@ export default function Settings() {
               <button
                 onClick={() => setPanel(p.id)}
                 className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                  panel === p.id
-                    ? 'bg-zinc-100 text-zinc-900 font-medium'
-                    : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700'
+                  p.id === 'reset'
+                    ? panel === 'reset'
+                      ? 'bg-red-50 text-red-700 font-medium'
+                      : 'text-red-500 hover:bg-red-50 hover:text-red-700'
+                    : panel === p.id
+                      ? 'bg-zinc-100 text-zinc-900 font-medium'
+                      : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-700'
                 }`}
               >
                 {p.label}
@@ -890,6 +961,7 @@ export default function Settings() {
         {panel === 'recurring' && <RecurringPanel />}
         {panel === 'rules' && <MerchantRulesPanel />}
         {panel === 'ai' && <AiPanel />}
+        {panel === 'reset' && <ResetPanel />}
       </main>
     </div>
   )
