@@ -94,10 +94,15 @@ class FdCreateIn(BaseModel):
     start_date: date
     maturity_date: date
     compounding: str
+    from_account_id: int   # bank / trading account to debit
+    fy_id: int
+    date: date             # transaction date (usually = start_date)
+    narration: str
 
 
 class FdOut(BaseModel):
     account_id: int
+    transaction_id: int | None = None
     name: str
     principal: int
     interest_rate: int
@@ -105,6 +110,21 @@ class FdOut(BaseModel):
     maturity_date: date
     compounding: str
     status: str
+
+
+class FdMatureIn(BaseModel):
+    to_account_id: int     # bank / trading account to receive proceeds
+    fy_id: int
+    date: date
+    narration: str
+
+
+class FdMatureOut(BaseModel):
+    transaction_id: int
+    account_id: int
+    principal: int
+    interest: int
+    total: int
 
 
 class FdListItemOut(FdOut):

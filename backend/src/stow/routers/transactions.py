@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from stow.db import get_session
-from stow.models import Account, Entry, FinancialYear, Transaction, TransactionAuditLog
+from stow.models import Account, CapitalGainEntry, Entry, FdMetadata, FinancialYear, Lot, Transaction, TransactionAuditLog
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -193,7 +193,23 @@ def delete_transaction(txn_id: int, session: Session = Depends(get_session)):
     if fy and fy.status == "locked":
         raise HTTPException(status_code=403, detail="Financial year is locked")
     entries = session.exec(select(Entry).where(Entry.transaction_id == txn_id)).all()
+    # Clean up lots created by this transaction (MF/stock buy)
+    lots = session.exec(select(Lot).where(Lot.transaction_id == txn_id)).all()
+    for lot in lots:
+        cg_entries = session.exec(select(CapitalGainEntry).where(CapitalGainEntry.lot_id == lot.id)).all()
+        for cge in cg_entries:
+            session.delete(cge)
+        session.delete(lot)
     for entry in entries:
+        if entry.amount > 0:
+            account = session.get(Account, entry.account_id)
+            if account and account.investment_subtype == "fd":
+                fd = session.exec(
+                    select(FdMetadata).where(FdMetadata.account_id == entry.account_id)
+                ).first()
+                if fd:
+                    session.delete(fd)
+                account.is_archived = True
         session.delete(entry)
     session.delete(txn)
     session.commit()

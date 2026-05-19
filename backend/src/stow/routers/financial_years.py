@@ -1,3 +1,4 @@
+from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 from stow.db import get_session
@@ -14,6 +15,16 @@ def list_financial_years(session: Session = Depends(get_session)):
 
 @router.post("", response_model=FinancialYear, status_code=201)
 def create_financial_year(fy: FinancialYear, session: Session = Depends(get_session)):
+    # Reject date ranges that overlap with any existing financial year
+    start = date.fromisoformat(str(fy.start_date))
+    end = date.fromisoformat(str(fy.end_date))
+    existing = session.exec(select(FinancialYear)).all()
+    for ex in existing:
+        if start <= ex.end_date and end >= ex.start_date:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Date range overlaps with existing financial year {ex.id}",
+            )
     session.add(fy)
     session.commit()
     session.refresh(fy)
