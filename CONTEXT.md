@@ -23,7 +23,7 @@ It is not Tally. It is inspired by Tally's accounting model but uses plain Engli
 | **Depreciation Rate** | The WDV rate (per Income Tax Act) on a fixed asset account, used to calculate year-end depreciation (e.g. 40% for computers, 15% for furniture) |
 | **Half-Year Rule** | IT Act rule: assets added after October 3 attract 50% of normal depreciation in the year of acquisition |
 | **Accumulated Depreciation** | A contra-asset account paired with each fixed asset, holding the total depreciation posted to date |
-| **Lot** | A single purchase of an investment: date, units/shares, price per unit — used for FIFO capital gains calculation |
+| **Lot** | A single purchase of an investment: date, units (milliunits), cost per unit (paise), remaining units — used for FIFO capital gains calculation |
 | **Holding** | The set of open lots for a given investment account |
 | **STCG** | Short-Term Capital Gain — equity held < 12 months, taxed at 20% |
 | **LTCG** | Long-Term Capital Gain — equity held ≥ 12 months, taxed at 12.5% above ₹1.25L exemption |
@@ -59,7 +59,7 @@ Balance Sheet
 │   └── Provisions
 ├── Fixed Assets                ← each account carries a WDV depreciation rate
 │   └── Accumulated Depreciation ← contra-asset; one account per fixed asset
-├── Investments
+├── Investments                 ← FD, equity MF, stock accounts live here
 └── Current Assets
     ├── Bank Accounts
     ├── Cash-in-Hand
@@ -68,7 +68,7 @@ Balance Sheet
 Profit & Loss
 ├── Income
 │   ├── Direct Income           ← Salary, freelance income
-│   └── Indirect Income         ← Interest, profit on asset sale
+│   └── Indirect Income         ← Interest income (FD, savings), capital gains income
 └── Expenses
     ├── Direct Expenses
     └── Indirect Expenses       ← Utilities, subscriptions, etc.
@@ -87,13 +87,15 @@ Profit & Loss
 |---|---|
 | **Payment** | Money going out of a bank/cash account |
 | **Receipt** | Money coming into a bank/cash account |
-| **Journal** | General adjusting entry (multi-leg, e.g. asset disposal, depreciation) |
+| **Journal** | General adjusting entry — also used for all investment movements (buy, sell, FD open/mature) |
 | **Contra** | Transfer between two cash/bank accounts |
 
 ### Financial Year Lifecycle
 1. **Open** — FY is created, opening balances entered
 2. **Active** — transactions can be posted
 3. **Locked** — FY is closed, no further edits; net profit calculated and stored on the FY record. Retained Earnings is updated via opening balance carry-forward when the next FY is created (see ADR 005)
+
+FY POST validates that the date range does not overlap any existing financial year.
 
 ### Opening Balances
 - Dedicated bulk-entry screen when a new FY is created
@@ -104,25 +106,42 @@ Investment accounts are split into four sub-types with different tracking needs:
 
 | Sub-type | Capital Gains | Model |
 |---|---|---|
-| Equity Mutual Funds | Yes — STCG/LTCG | FIFO lots (units, NAV, date) |
-| Direct Stocks | Yes — STCG/LTCG | FIFO lots (shares, price, date) |
-| Fixed Deposits | No — interest is income | Principal, rate (bps), maturity date, compounding (simple/monthly/quarterly/yearly) |
+| Equity Mutual Funds | Yes — STCG/LTCG | FIFO lots (milliunits, cost_per_unit in paise) |
+| Direct Stocks | Yes — STCG/LTCG | FIFO lots (milliunits, cost_per_unit in paise) |
+| Fixed Deposits | No — interest is income | FdMetadata: principal (paise), rate (bps), maturity date, compounding |
 | Real Estate | v2 | — |
 
-- Equity MF and stock accounts maintain a **Holding** (set of open Lots)
-- Lot units are stored as **milliunits** (1 unit = 1,000 milliunits); cost per unit in paise per milliunit
+#### Unit / amount conventions
+- Lot units stored as **milliunits**: 1 unit = 1,000 milliunits (e.g. 12.345 units → 12345)
+- `cost_per_unit` = NAV/price in **paise per unit** (not per milliunit): `NAV_rupees × 100`
+- Total cost formula: `units_milliunits × cost_per_unit // 1000` → paise
+- All money amounts throughout the system are in **paise** (₹1 = 100 paise)
+
+#### Investment double-entry
+Every investment operation creates a balanced Journal transaction automatically:
+
+| Operation | Debit | Credit |
+|---|---|---|
+| Open FD | FD account (+principal) | Bank account (−principal) |
+| Mature FD | Bank account (+principal+interest) | FD account (−principal), Interest Income (−interest) |
+| Buy MF/stock | Investment account (+total_cost) | Bank/trading account (−total_cost) |
+| Sell MF/stock | Bank/trading account (+proceeds) | Investment account (−cost_basis), STCG/LTCG account (−gain) or Capital Loss (+loss) |
+
+When an investment-opening transaction is deleted, the cascade also removes:
+- FD: deletes FdMetadata, archives the FD account
+- MF/stock buy: deletes associated Lot records and any CapitalGainEntry records
+
+#### Capital Gains
 - On sale, FIFO lots are consumed and STCG/LTCG calculated automatically
-- STCG/LTCG tax rates are managed via a versioned **Capital Gains Tax Rule** table (not hardcoded), allowing rates to be updated when legislation changes
-- A **Capital Gains Report** is generated for ITR Schedule CG
-- FD interest income is recorded as a Receipt transaction; TDS deducted tracked under TDS Receivable
-- PPF is out of scope
+- STCG/LTCG tax rates managed via a versioned `CapitalGainsTaxRule` table (not hardcoded)
+- Capital Gains Report generated for ITR Schedule CG
 
 ### Live Prices (Equity MF & Stocks)
 - Each equity MF account carries an AMFI scheme code (**Price Source ID**); each stock account carries an NSE ticker symbol
-- A daily background job fetches current NAV from the AMFI/mfapi.in API and stock prices from NSE bhavcopy or yfinance
-- Fetched prices are stored in a `price_quote` table (account, price, date)
+- A daily background job fetches current NAV from AMFI/mfapi.in and stock prices from NSE bhavcopy or yfinance
+- Fetched prices stored in `price_quote` table (account, price, date)
 - **Current value** = latest price quote × open units; **Unrealized gain** = current value − cost basis
-- The Portfolio screen shows current value and unrealized gain only when a price quote exists for the account; otherwise it shows cost basis only
+- Portfolio screen shows current value and unrealized gain only when a price quote exists; otherwise shows cost basis only
 
 ### Depreciation
 - Method: Written Down Value (WDV) per Income Tax Act
@@ -159,35 +178,60 @@ All reports are generated server-side and exportable as PDF.
 ## AI Features
 
 ### Conversational Agent Architecture
-All user-facing AI interactions flow through a **multi-agent system**:
+All user-facing AI interactions flow through a **multi-agent system** built with `pydantic_ai` and the `subagents_pydantic_ai` library:
 
-- **Orchestrator** (`backend/src/agent/orchestrator.py`) — the top-level pydantic_ai agent. Receives all user messages (text, images, PDF references), classifies intent, and delegates to specialised subagents.
+- **Orchestrator** (`backend/src/agent/orchestrator.py`) — the top-level pydantic_ai agent. Receives all user messages (text, images, PDF references), classifies intent, and delegates to specialised subagents via `SubAgentCapability`.
 - **Subagents** (`backend/src/agent/subagents/`) — each is a focused pydantic_ai agent with its own tool set:
-  | Subagent | Responsibility |
-  |---|---|
-  | `transaction` | NL → create / query / edit / delete transactions |
-  | `account` | Create / query / archive accounts |
-  | `import_agent` | Bank statement staging row review and bulk confirmation |
-  | `investment` | FD, equity MF, stock buy/sell, portfolio queries |
-  | `recurring` | Create / confirm / skip recurring schedules |
-  | `report` | P&L, balance sheet, cash flow, capital gains queries |
+
+| Subagent | Responsibility |
+|---|---|
+| `transaction` | NL → parse → proposal → create / query / edit / delete transactions |
+| `account` | Create / query / archive accounts |
+| `import_agent` | Bank statement staging row review and bulk confirmation |
+| `investment` | FD open/mature, equity MF/stock buy/sell, portfolio queries |
+| `recurring` | Create / confirm / skip recurring schedules |
+| `report` | P&L, balance sheet, cash flow, capital gains queries |
+
+### Progress Events
+`backend/src/agent/activity.py` provides a ContextVar-based activity bus:
+- `emit(label: str)` puts a short label on a per-request `asyncio.Queue`
+- WebSocket transport drains the queue in parallel with the agent run, sending `{"type": "progress", "label": "…"}` JSON frames to the frontend
+- Frontend (ChatSidebar) shows the label next to the typing dots indicator
+- Telegram transport shows `send_chat_action("typing")` every 4 seconds while the agent runs
 
 ### Transport Layers
-- **WebSocket** (`backend/src/agent/transport/websocket.py`) — web chat, real-time token streaming, handles text / image (`BinaryContent`) / PDF uploads. PDFs are pre-uploaded to `POST /imports` before the orchestrator sees them; orchestrator receives `[IMPORT_BATCH:{id}:{filename}]`.
-- **Telegram** (`backend/src/agent/transport/telegram/`) — same orchestrator, separate entry point. Handles photo messages as `BinaryContent` for vision, PDF documents as import batches.
+- **WebSocket** (`backend/src/agent/transport/websocket.py`) — web chat. Creates a progress queue, sets the ContextVar, drains progress messages while the agent runs, then sends the final response. Handles text, images (`BinaryContent`), and PDF uploads. PDFs are pre-uploaded to `POST /imports`; orchestrator receives `[IMPORT_BATCH:{id}:{filename}]`.
+- **Telegram** (`backend/src/agent/transport/telegram/`) — same orchestrator, separate entry point. Handles photo messages as `BinaryContent` for vision, PDF documents as import batches. Converts LLM markdown output to Telegram-compatible HTML via `_md_to_html()`.
 
 ### Natural Language Transaction Entry
-- User types a loose narrative: "paid electricity bill 2400 from HDFC last Tuesday"
-- Orchestrator delegates to transaction subagent; LLM infers date, amount, voucher type, and account mappings
-- A **Proposal Card** is shown for review and confirmation before posting
-- Never auto-posts without user confirmation
+1. User types a loose narrative: "paid electricity bill 2400 from HDFC last Tuesday"
+2. Orchestrator delegates to `transaction_agent`
+3. `transaction_agent` calls `parse_natural_language` → returns a proposal JSON (never auto-posts)
+4. Orchestrator emits a `PROPOSAL:` line + renders a human-readable card for the user
+5. On "confirm": orchestrator delegates `"confirm: <JSON>"` back to `transaction_agent` → `create_transaction`
+6. On "decline": friendly cancellation; on edit request: update fields and re-show card
+
+`transaction_agent` explicitly refuses investment buy/sell/FD requests — those must go to `investment_agent`.
+
+### Investment Operations (via agent)
+The orchestrator routes any mention of "buy", "mutual fund", "FD", "stock", "NAV", "units", "SIP", etc. directly to `investment_agent` (never to `transaction_agent`).
+
+`investment_agent` directly calls backend endpoints — no proposal card step:
+- `create_fd` → `POST /investments/fds` — creates account + FdMetadata + balanced journal
+- `mature_fd` → `POST /investments/fds/{id}/mature`
+- `buy_investment` → `POST /investments/{id}/buy`
+- `sell_investment` → `POST /investments/{id}/sell`
+
+Parameter convention in agent tools:
+- `account_id` = the INVESTMENT account (debited on buy)
+- `bank_account_id` = the PAYING account (credited on buy; debited on sell to receive proceeds)
 
 ### UPI Screenshot (Vision)
 - User sends a UPI payment screenshot via web chat or Telegram
-- Orchestrator passes `BinaryContent` to the LLM vision model
+- Orchestrator passes `BinaryContent` to the LLM vision model (text prompt must come first in the list)
 - LLM extracts: merchant name, amount, reference number
 - `_get_merchant_rules` tool called to pre-fill payee account from saved merchant rules
-- Proposal Card shown; user confirms to post
+- Proposal card shown; user confirms to post
 
 ### Bank Statement PDF Import
 - Supported: PDF only (text extraction via pdfplumber/pymupdf → LLM parsing)
@@ -202,6 +246,10 @@ All user-facing AI interactions flow through a **multi-agent system**:
 - Saved mappings from merchant name pattern (substring, case-insensitive, supports `*` wildcard) → account
 - Applied automatically during imports and UPI screenshot processing
 - Managed from Settings → Merchant Rules (view, edit, delete, undo-on-delete toast)
+
+### Markdown Rendering
+- Chat UI: agent responses rendered via `react-markdown` + `remark-gfm` with full component overrides (no prose classes); user messages stay `whitespace-pre-wrap`
+- Telegram: `_md_to_html()` converts LLM markdown → Telegram HTML using the `markdown` package + regex cleanup for unsupported tags
 
 ### Background Scheduler
 - APScheduler 4.x running in the FastAPI process, timezone: Asia/Kolkata (IST)
@@ -227,21 +275,16 @@ The Telegram bot provides natural-language accounting via the same backend. It c
 | Scope | Complements web app — no need to replicate full web UX in bot |
 | User model | Single user, simple `telegram_user_id` → `user_id` mapping on `/start` |
 | Setup | Simple `/start` mapping — no auth flow needed |
-| Interaction | Hybrid — free text for daily use, slash commands for specific workflows (`/import`, `/recurring`) |
-| Parsing | Single centralized LLM call handles all extraction (amount, type, accounts, date, counterparty) |
-| Confirmation | Always show proposal card, never auto-post |
-| Editing | Inline keyboard with tapable field buttons (account, date, amount) |
-| Account selection | Learns counterparty→account pairings, pre-fills, shows top 3-5 for override |
-| Query responses | One-line answer by default, [breakdown] and [report] buttons for detail |
-| Screenshots | New `POST /ai/process-image` endpoint using LLM vision capability |
-| Bank import | Auto-confirm all staging rows except `possible_duplicate=True` flagged rows |
-| Recurring | Daily digest at fixed time, individual [Confirm] [Skip] buttons per item |
-| Architecture | Same FastAPI process, shared DB session, uses existing background scheduler |
-| State management | In-memory dict keyed by `telegram_user_id`, TTL 10 minutes |
-| Error handling | 3 retries with exponential backoff on transient errors, user-friendly messages on failure |
-| Financial year | Always checks active FY from backend — no stale state |
+| Interaction | Free text for daily use, slash commands for specific workflows (`/balance`, `/recurring`, `/import`) |
+| Parsing | Full orchestrator + subagent pipeline — same as web chat |
+| Confirmation | Proposal card for regular transactions; investments execute directly |
+| Conversation history | In-memory dict keyed by `telegram_user_id`; reset on `/start` |
+| Screenshots | `BinaryContent` passed to LLM vision — text prompt first, then image bytes |
+| Bank import | PDF uploaded to `/imports`, then `[IMPORT_BATCH:{id}:{filename}]` sent to orchestrator |
+| Typing indicator | `send_chat_action("typing")` every 4 s while agent runs |
+| Response format | Markdown → Telegram HTML via `_md_to_html()`; `parse_mode="HTML"` |
 | Bot framework | `aiogram 3.x` — async-native, integrates with FastAPI ecosystem |
-| AI infrastructure | Reuses existing `pydantic_ai` agent — same LLM provider, same config |
+| AI infrastructure | Reuses existing `pydantic_ai` orchestrator — same LLM provider, same config |
 
 ### Bot Vocabulary
 
@@ -250,44 +293,35 @@ The Telegram bot provides natural-language accounting via the same backend. It c
 | **Proposal Card** | A scannable summary of the parsed transaction shown before posting — amount, type, accounts, date, narration |
 | **Staging Row** | A parsed bank statement line awaiting confirmation — same as web app's staging area |
 | **Daily Digest** | A single message listing all recurring transactions due today, with individual [Confirm] [Skip] buttons |
-| **Counterparty** | The entity on the other side of a transaction (merchant, person, bank) — extracted from text, UPI ID, or image |
 
-### Bot State Machine
-
-```
-idle → parsing → reviewing → editing → confirming → posted
-                          ↓
-                    editing (loop back to reviewing)
-                    editing (cancel → idle)
-```
-
-- State stored in-memory, keyed by `telegram_user_id`
-- TTL: 10 minutes of inactivity
-- On timeout or restart: state is lost, user starts fresh
-
-### File Structure
+## File Structure
 
 ```
 backend/src/
 ├── agent/
+│   ├── activity.py                # ContextVar-based progress event bus (emit())
 │   ├── orchestrator.py            # Top-level pydantic_ai agent; routes to subagents
-│   ├── deps.py                    # Shared dependency injection (DB session, HTTP client)
+│   ├── deps.py                    # Shared dependency injection (HTTP client, base URL)
 │   ├── subagents/
-│   │   ├── transaction.py         # NL → create/query/edit/delete transactions
+│   │   ├── transaction.py         # NL → proposal → create/query/edit/delete transactions
 │   │   ├── account.py             # Create/query/archive accounts
 │   │   ├── import_agent.py        # PDF staging row review and bulk confirmation
-│   │   ├── investment.py          # FD, equity MF, stock buy/sell, portfolio
+│   │   ├── investment.py          # FD open/mature, MF/stock buy/sell, portfolio
 │   │   ├── recurring.py           # Create/confirm/skip recurring schedules
 │   │   └── report.py              # P&L, BS, cash flow, capital gains queries
 │   └── transport/
-│       ├── websocket.py           # Web chat — streaming WebSocket, image/PDF pre-upload
-│       ├── proposal.py            # Proposal card formatter (shared across transports)
+│       ├── websocket.py           # Web chat — progress drain, image/PDF pre-upload
+│       ├── proposal.py            # Proposal card parser (shared across transports)
 │       └── telegram/
 │           ├── bot.py             # aiogram Bot instance + dispatcher setup
-│           ├── handlers.py        # All Telegram event handlers (text, photo, document, commands)
-│           └── keyboard.py        # Inline keyboard builders (Confirm/Decline/Edit)
+│           ├── handlers.py        # All Telegram event handlers; _md_to_html(); _keep_typing()
+│           └── keyboard.py        # Inline keyboard builders (Confirm/Decline)
 └── stow/
     ├── routers/                   # FastAPI route modules (one per domain)
+    │   ├── transactions.py        # CRUD; cascades Lot/FdMetadata on delete
+    │   ├── investments.py         # FD create/mature/list, buy, sell, holdings, portfolio
+    │   ├── financial_years.py     # FY CRUD; overlap validation on create
+    │   └── …
     ├── models.py                  # SQLModel ORM models
     ├── ai_config.py               # LLM config load/save + normalize_base_url()
     ├── import_pipeline.py         # PDF parsing → staging rows
@@ -295,23 +329,28 @@ backend/src/
     ├── recurring.py               # Queue generation logic
     ├── scheduler.py               # APScheduler job definitions
     ├── reports/                   # Report generation + PDF export
-    └── investments/               # FD, lot tracking, capital gains, prices
+    └── investments/
+        ├── schemas.py             # Pydantic models for buy/sell/FD/lot/portfolio
+        ├── repository.py          # LotRepository: buy(), sell(), holdings(), capital_gains()
+        ├── fd.py                  # accrued_interest() helper
+        └── prices.py              # PriceRepository: latest(), store()
 ```
 
 ## Technology Stack
 
 | Layer | Choice |
 |---|---|
-| Frontend | Vite + React 19 + TanStack Query v5 + lucide-react (no component library — custom design system) |
+| Frontend | Vite + React 19 + TanStack Query v5 + react-markdown + remark-gfm + lucide-react (no component library — custom design system) |
+| Styling | Tailwind CSS v4 (`@import "tailwindcss"` syntax) |
 | Backend | FastAPI (Python) |
 | ORM | SQLModel + Alembic |
 | Database | PostgreSQL |
-| AI | pydantic_ai + OpenAI-compatible local inference (oMLX, Ollama, LM Studio, vLLM) |
+| AI | pydantic_ai + subagents_pydantic_ai + OpenAI-compatible local inference (oMLX, Ollama, LM Studio, vLLM) |
 | Scheduler | APScheduler 4.x (IST timezone) |
 | PDF export | WeasyPrint or ReportLab |
 | PDF parsing | pdfplumber or pymupdf |
+| Telegram | markdown (Python package, for HTML conversion) + aiogram 3.x |
 | Deployment | Docker Compose (local machine) |
-| Telegram Bot | aiogram 3.x (async-native, same FastAPI process) |
 
 ## Project Structure
 
@@ -327,6 +366,7 @@ stow/
 │       └── stow/      # FastAPI app, routers, models, reports, investments, scheduler
 ├── docs/
 │   └── adr/           # Architecture Decision Records
+├── e2e/               # Playwright end-to-end tests
 ├── QA_CHECKLIST.md    # Comprehensive manual QA checklist (all user-facing features)
 ├── docker-compose.yml
 └── CONTEXT.md
