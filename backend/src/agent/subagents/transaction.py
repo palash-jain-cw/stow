@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
+from agent.activity import emit
 from agent.deps import StowDeps
 
 _INSTRUCTIONS = """\
@@ -14,14 +15,43 @@ Key rules:
 - All amounts are in paise (1 INR = 100 paise). Amounts like "₹500" = 50000 paise.
 - Transaction types: payment | receipt | journal | contra
 - Every transaction needs a from_account and to_account (expressed as entries summing to zero).
-- Use get_active_fy to find the active financial year before creating a transaction.
-- Use list_accounts to resolve account names to IDs.
-- Always return a structured summary of what was done.
+
+## CRITICAL: Proposal-first flow for new transactions — NEVER skip this
+
+When asked to record a new transaction from natural language or extracted image data:
+  1. Call get_active_fy → note the fy_id.
+  2. Call list_accounts → note account names for the two accounts involved.
+  3. Call parse_natural_language with the description text.
+  4. Combine the result into this exact JSON and return it as your output — then STOP:
+     {"type":"<type>","date":"<ISO date>","amount_paise":<int>,"narration":"<str>",
+      "from_account_id":<int>,"from_account_name":"<str>",
+      "to_account_id":<int>,"to_account_name":"<str>","fy_id":<int>}
+     Note: parse_natural_language returns the field as "amount" (in paise) — rename it to "amount_paise".
+
+Do NOT call create_transaction during this step. The orchestrator will show the user a
+proposal card and re-invoke you with "confirm: <proposal JSON>" after the user approves.
+
+Only call create_transaction when the message explicitly starts with "confirm:" AND provides
+all required fields. In that case, skip steps 1–4 and call create_transaction directly using
+the provided values.
+
+## NEVER handle investment operations
+Do NOT process requests to buy/sell mutual funds, stocks, or open/mature fixed deposits.
+These MUST go to investment_agent. If such a request reaches you, respond:
+"This is an investment operation — please use investment_agent."
+
+## Queries, updates, deletes
+- Queries: use list_transactions or get_transaction and return results.
+- Updates: use update_transaction with the specified changes.
+- Deletes: use delete_transaction after confirming the txn_id.
+
+Always return a structured summary of what was done.
 """
 
 
 async def _get_active_fy(ctx: RunContext[StowDeps]) -> dict:
     """Get the currently active financial year."""
+    await emit("Looking up financial year")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/financial-years")
     r.raise_for_status()
     fys = r.json()
@@ -33,6 +63,7 @@ async def _get_active_fy(ctx: RunContext[StowDeps]) -> dict:
 
 async def _list_accounts(ctx: RunContext[StowDeps], include_archived: bool = False) -> list[dict]:
     """List all accounts with their current balances."""
+    await emit("Fetching accounts")
     r = await ctx.deps.http_client.get(
         f"{ctx.deps.base_url}/accounts",
         params={"include_archived": include_archived},
@@ -50,6 +81,7 @@ async def _parse_natural_language(ctx: RunContext[StowDeps], text: str) -> dict:
     Returns:
         Structured transaction with type, date, amount_paise, narration, from_account_id, to_account_id.
     """
+    await emit("Parsing transaction")
     r = await ctx.deps.http_client.post(
         f"{ctx.deps.base_url}/ai/parse-transaction",
         json={"text": text},
@@ -81,6 +113,7 @@ async def _create_transaction(
         amount_paise: Amount in paise (positive integer)
         tags: Optional list of tags
     """
+    await emit("Creating transaction")
     entries = [
         {"account_id": from_account_id, "amount": amount_paise},
         {"account_id": to_account_id, "amount": -amount_paise},
@@ -113,6 +146,7 @@ async def _list_transactions(
         account_id: Filter by account ID
         q: Search in narration (case-insensitive substring)
     """
+    await emit("Searching transactions")
     params: dict[str, Any] = {}
     if type:
         params["type"] = type
@@ -131,6 +165,7 @@ async def _get_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict:
     Args:
         txn_id: Transaction ID
     """
+    await emit("Fetching transaction")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/transactions/{txn_id}")
     r.raise_for_status()
     return r.json()
@@ -151,6 +186,7 @@ async def _update_transaction(
         date_str: New ISO date string (optional)
         tags: New tags list (optional)
     """
+    await emit("Updating transaction")
     body: dict[str, Any] = {}
     if narration is not None:
         body["narration"] = narration
@@ -169,6 +205,7 @@ async def _delete_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict:
     Args:
         txn_id: Transaction ID to delete
     """
+    await emit("Deleting transaction")
     r = await ctx.deps.http_client.delete(f"{ctx.deps.base_url}/transactions/{txn_id}")
     r.raise_for_status()
     return {"deleted": True, "txn_id": txn_id}
