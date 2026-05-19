@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Send, Paperclip, Bot, User, AlertCircle, RotateCcw } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { ProposalCard, type Proposal } from './ProposalCard'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -49,6 +51,7 @@ export function ChatSidebar() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
+  const [progressLabel, setProgressLabel] = useState('')
   const [status, setStatus] = useState<WsStatus>('connecting')
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -68,8 +71,10 @@ export function ChatSidebar() {
       ws.onopen = () => setStatus('open')
 
       ws.onmessage = ({ data }: MessageEvent<string>) => {
-        const msg = JSON.parse(data) as { type: string; content?: string }
-        if (msg.type === 'token' && msg.content !== undefined) {
+        const msg = JSON.parse(data) as { type: string; content?: string; label?: string }
+        if (msg.type === 'progress') {
+          setProgressLabel(msg.label ?? '')
+        } else if (msg.type === 'token' && msg.content !== undefined) {
           if (pendingIdRef.current) {
             setMessages(prev => prev.map(m =>
               m.id === pendingIdRef.current
@@ -97,6 +102,7 @@ export function ChatSidebar() {
             pendingIdRef.current = null
           }
           setIsTyping(false)
+          setProgressLabel('')
         }
       }
 
@@ -125,6 +131,7 @@ export function ChatSidebar() {
 
     setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content: text }])
     setIsTyping(true)
+    setProgressLabel('')
     pendingIdRef.current = null
     ws.send(JSON.stringify({ type: 'text', content: text }))
     setInput('')
@@ -142,6 +149,7 @@ export function ChatSidebar() {
         { id: crypto.randomUUID(), role: 'user', content: `📎 ${file.name}` },
       ])
       setIsTyping(true)
+      setProgressLabel('')
       pendingIdRef.current = null
       ws.send(JSON.stringify({
         type: 'file',
@@ -198,7 +206,7 @@ export function ChatSidebar() {
             : <MessageBubble key={msg.id} message={msg} />
         ))}
 
-        {showDots && <TypingDots />}
+        {showDots && <TypingDots label={progressLabel} />}
 
         {status === 'error' && (
           <div className="flex items-center gap-1.5 text-xs text-red-400">
@@ -269,25 +277,28 @@ function StatusDot({ status }: { status: WsStatus }) {
 
 // ── TypingDots ─────────────────────────────────────────────────────────────
 
-function TypingDots() {
+function TypingDots({ label }: { label?: string }) {
   return (
     <div className="flex items-end gap-2">
       <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center shrink-0">
         <Bot className="w-3.5 h-3.5 text-zinc-500" />
       </div>
-      <div className="flex items-center gap-1 bg-zinc-100 rounded-2xl rounded-bl-sm px-3 py-2.5">
-        <span
-          className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
-          style={{ animationDelay: '0ms' }}
-        />
-        <span
-          className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
-          style={{ animationDelay: '150ms' }}
-        />
-        <span
-          className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
-          style={{ animationDelay: '300ms' }}
-        />
+      <div className="flex items-center gap-2 bg-zinc-100 rounded-2xl rounded-bl-sm px-3 py-2.5">
+        <div className="flex items-center gap-1">
+          <span
+            className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
+            style={{ animationDelay: '0ms' }}
+          />
+          <span
+            className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
+            style={{ animationDelay: '150ms' }}
+          />
+          <span
+            className="w-1.5 h-1.5 bg-zinc-400 rounded-full animate-bounce"
+            style={{ animationDelay: '300ms' }}
+          />
+        </div>
+        {label && <span className="text-xs text-zinc-500 truncate max-w-[140px]">{label}</span>}
       </div>
     </div>
   )
@@ -307,14 +318,48 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           : <Bot className="w-3.5 h-3.5 text-zinc-500" />
         }
       </div>
-      <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
+      <div className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-relaxed break-words ${
         isUser
           ? 'bg-blue-600 text-white rounded-br-sm'
           : 'bg-zinc-100 text-zinc-800 rounded-bl-sm'
       }`}>
-        {message.content}
-        {message.streaming && (
-          <span className="inline-block w-0.5 h-3 bg-zinc-500 ml-0.5 opacity-70 animate-pulse" />
+        {isUser ? (
+          <span className="whitespace-pre-wrap">{message.content}</span>
+        ) : (
+          <>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="my-1 leading-relaxed">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                h1: ({ children }) => <h1 className="font-semibold text-base my-1">{children}</h1>,
+                h2: ({ children }) => <h2 className="font-semibold text-sm my-1">{children}</h2>,
+                h3: ({ children }) => <h3 className="font-semibold text-sm my-1">{children}</h3>,
+                ul: ({ children }) => <ul className="my-1 pl-4 list-disc">{children}</ul>,
+                ol: ({ children }) => <ol className="my-1 pl-4 list-decimal">{children}</ol>,
+                li: ({ children }) => <li className="my-0.5">{children}</li>,
+                code: ({ children }) => (
+                  <code className="bg-zinc-200 px-1 rounded text-xs font-mono">{children}</code>
+                ),
+                pre: ({ children }) => (
+                  <pre className="bg-zinc-200 rounded-lg p-2 text-xs font-mono overflow-x-auto my-1">{children}</pre>
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="border-l-2 border-zinc-300 pl-2 text-zinc-500 my-1">{children}</blockquote>
+                ),
+                hr: () => <hr className="my-2 border-zinc-300" />,
+                a: ({ href, children }) => (
+                  <a href={href} className="text-blue-600 underline" target="_blank" rel="noreferrer">{children}</a>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+            {message.streaming && (
+              <span className="inline-block w-0.5 h-3 bg-zinc-500 ml-0.5 opacity-70 animate-pulse" />
+            )}
+          </>
         )}
       </div>
     </div>
