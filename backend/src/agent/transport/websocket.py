@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import logging
 import os
 
 import httpx
@@ -8,7 +10,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelMessage
 
+from agent.activity import _progress_queue
 from agent.deps import StowDeps
+
+logger = logging.getLogger(__name__)
 
 
 def _build_prompt(data: dict) -> str | list:
@@ -23,7 +28,7 @@ def _build_prompt(data: dict) -> str | list:
         file_bytes = base64.b64decode(content)
         mime_type = data.get("mime_type", "application/octet-stream")
         if mime_type.startswith("image/"):
-            return [BinaryContent(data=file_bytes, media_type=mime_type), "Process this UPI payment screenshot"]
+            return ["Process this UPI payment screenshot", BinaryContent(data=file_bytes, media_type=mime_type)]
         return "Unsupported file type. Please send an image or a bank statement PDF."
 
     return content
@@ -51,6 +56,18 @@ async def _upload_pdf_to_batch(
         return f"Sorry, I couldn't parse the bank statement PDF ({exc}). Please try again."
 
 
+async def _drain_progress(queue: asyncio.Queue[str | None], websocket: WebSocket) -> None:
+    """Forward progress labels from the queue to the WebSocket until sentinel None arrives."""
+    while True:
+        label = await queue.get()
+        if label is None:
+            break
+        try:
+            await websocket.send_json({"type": "progress", "label": label})
+        except Exception:
+            pass
+
+
 async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
     await websocket.accept()
     message_history: list[ModelMessage] = []
@@ -72,19 +89,28 @@ async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
                 else:
                     prompt = _build_prompt(data)
 
+                queue: asyncio.Queue[str | None] = asyncio.Queue()
+                token = _progress_queue.set(queue)
+                drain = asyncio.create_task(_drain_progress(queue, websocket))
                 try:
-                    async with orchestrator.run_stream(
-                        prompt, deps=deps, message_history=message_history
-                    ) as result:
-                        async for chunk in result.stream_text(delta=True):
-                            await websocket.send_json({"type": "token", "content": chunk})
-
+                    result = await orchestrator.run(
+                        prompt, deps=deps, message_history=message_history,
+                        model_settings={"max_tokens": 4096},
+                    )
+                    output = str(result.output).strip()
+                    if output:
+                        await websocket.send_json({"type": "token", "content": output})
                     message_history = result.all_messages()
-                except Exception:
+                except Exception as exc:
+                    print(f"[WS] exception: {type(exc).__name__}: {exc}", flush=True)
                     await websocket.send_json({
                         "type": "token",
-                        "content": "⚠️ Something went wrong — please try again.",
+                        "content": f"⚠️ Something went wrong — {exc}",
                     })
+                finally:
+                    await queue.put(None)
+                    await drain
+                    _progress_queue.reset(token)
 
                 await websocket.send_json({"type": "done"})
         except WebSocketDisconnect:

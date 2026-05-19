@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
+from agent.activity import emit
 from agent.deps import StowDeps
 
 _INSTRUCTIONS = """\
@@ -32,6 +33,7 @@ You manage the daily recurring transaction digest.
 
 async def _get_recurring_due(ctx: RunContext[StowDeps]) -> list[dict]:
     """Get all recurring transaction queue items due today."""
+    await emit("Checking recurring items")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/recurring/due-today")
     r.raise_for_status()
     return r.json()
@@ -50,6 +52,7 @@ async def _confirm_recurring(
         date_override: ISO date override (default: due_date)
         narration_override: Narration override (default: template narration)
     """
+    await emit("Posting recurring transaction")
     body: dict[str, Any] = {}
     if date_override:
         body["date"] = date_override
@@ -69,6 +72,7 @@ async def _skip_recurring(ctx: RunContext[StowDeps], item_id: int) -> dict:
     Args:
         item_id: Recurring queue item ID
     """
+    await emit("Skipping recurring item")
     r = await ctx.deps.http_client.post(
         f"{ctx.deps.base_url}/recurring/queue/{item_id}/skip",
     )
@@ -78,6 +82,7 @@ async def _skip_recurring(ctx: RunContext[StowDeps], item_id: int) -> dict:
 
 async def _list_schedules(ctx: RunContext[StowDeps]) -> list[dict]:
     """List all active recurring schedules."""
+    await emit("Fetching schedules")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/recurring/schedules")
     r.raise_for_status()
     return r.json()

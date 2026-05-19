@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
+from agent.activity import emit
 from agent.deps import StowDeps
 from agent.subagents.transaction import _get_active_fy, _list_accounts
 
@@ -64,6 +65,7 @@ async def _review_staging(
         batch_id: Import batch ID
         status: Filter by status: pending | confirmed | discarded | reconciled
     """
+    await emit("Reviewing import batch")
     params: dict[str, Any] = {}
     if status:
         params["status"] = status
@@ -88,6 +90,7 @@ async def _confirm_staging(
         bank_account_id: Bank account ID for debit/credit entries
         fy_id: Financial year ID to post transactions into
     """
+    await emit("Posting transactions")
     r = await ctx.deps.http_client.post(
         f"{ctx.deps.base_url}/imports/{batch_id}/confirm",
         json={"bank_account_id": bank_account_id, "fy_id": fy_id},
@@ -109,6 +112,7 @@ async def _match_staging_row(
         row_id: Staging row ID
         transaction_id: Existing transaction ID to match against
     """
+    await emit("Reconciling transaction")
     r = await ctx.deps.http_client.post(
         f"{ctx.deps.base_url}/imports/{batch_id}/rows/{row_id}/match",
         json={"transaction_id": transaction_id},
@@ -136,6 +140,7 @@ async def _update_staging_row(
         narration_override: Override narration for this row
         tags: Tags to apply when confirmed
     """
+    await emit("Updating staging row")
     body: dict[str, Any] = {}
     if status is not None:
         body["status"] = status
@@ -159,6 +164,7 @@ async def _get_batch(ctx: RunContext[StowDeps], batch_id: int) -> dict:
     Args:
         batch_id: Import batch ID
     """
+    await emit("Fetching import batch")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/imports/{batch_id}")
     r.raise_for_status()
     return r.json()

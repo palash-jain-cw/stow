@@ -5,11 +5,13 @@ from datetime import datetime
 from pydantic_ai import Agent, RunContext
 from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
+from agent.activity import emit
 from agent.deps import StowDeps
 
 
 async def _get_current_datetime(ctx: RunContext[StowDeps]) -> dict:
     """Return the current date and time. Call this whenever you need to know today's date."""
+    await emit("Checking date")
     now = datetime.now()
     return {
         "date": now.strftime("%Y-%m-%d"),
@@ -26,6 +28,7 @@ async def _get_merchant_rules(ctx: RunContext[StowDeps]) -> list[dict]:
     Call this when processing a payment screenshot to check if the merchant name matches
     any rule and pre-fill the account before delegating to transaction_agent.
     """
+    await emit("Looking up merchant rules")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/merchant-rules")
     r.raise_for_status()
     return r.json()
@@ -79,6 +82,11 @@ When you see a prompt starting with [IMPORT_BATCH:{id}:{filename}]:
 - Investments (FDs, MFs, stocks, capital gains, portfolio) → investment_agent
 - Recurring transactions → recurring_agent
 
+## CRITICAL routing rules
+- ANY mention of "buy", "purchase", "invest", "mutual fund", "MF", "SIP", "NAV", "fixed deposit",
+  "FD", "stock", "shares", "units" in the context of purchasing/creating investments → investment_agent
+- NEVER route investment purchases to transaction_agent; investment_agent handles all money movement for investments
+
 ## Proposal cards
 When transaction_agent returns a parsed transaction proposal, emit a PROPOSAL line
 as the very first line of your response, followed by the human-readable card:
@@ -94,7 +102,9 @@ Example card:
 
   Reply "confirm" to post, "decline" to discard, or describe a change.
 
-On "confirm": call create_transaction and reply with the transaction number.
+On "confirm": delegate to transaction_agent with the message
+  "confirm: <paste the full PROPOSAL JSON here>"
+  and reply with the transaction number once created.
 On "decline": reply with a friendly cancellation message.
 On an edit request: update the relevant field, re-emit the PROPOSAL line, and re-render the card.
 

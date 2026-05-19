@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
+from agent.activity import emit
 from agent.deps import StowDeps
 
 _INSTRUCTIONS = """\
@@ -44,6 +45,7 @@ If no date range is given for a spending query, ask ONE clarifying question befo
 
 async def _get_current_date(ctx: RunContext[StowDeps]) -> dict:
     """Return today's date. Call this before resolving any relative date expression."""
+    await emit("Checking date")
     now = datetime.now()
     return {
         "date": now.strftime("%Y-%m-%d"),
@@ -56,6 +58,7 @@ async def _get_current_date(ctx: RunContext[StowDeps]) -> dict:
 
 async def _get_financial_years(ctx: RunContext[StowDeps]) -> list[dict]:
     """List all financial years with start_date, end_date, and status."""
+    await emit("Fetching financial years")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/financial-years")
     r.raise_for_status()
     return r.json()
@@ -63,6 +66,7 @@ async def _get_financial_years(ctx: RunContext[StowDeps]) -> list[dict]:
 
 async def _list_accounts(ctx: RunContext[StowDeps]) -> list[dict]:
     """List all accounts with current balances (in paise). Use for balance queries."""
+    await emit("Fetching account balances")
     r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/accounts")
     r.raise_for_status()
     return r.json()
@@ -85,6 +89,7 @@ async def _list_transactions(
         narration_q: Case-insensitive substring match on narration
         txn_type: Filter by type: payment | receipt | journal | contra
     """
+    await emit("Searching transactions")
     params: dict[str, Any] = {}
     if from_date:
         params["from_date"] = from_date
@@ -107,6 +112,7 @@ async def _get_trial_balance(ctx: RunContext[StowDeps], fy_id: int) -> dict:
     Args:
         fy_id: Financial year ID
     """
+    await emit("Generating trial balance")
     r = await ctx.deps.http_client.get(
         f"{ctx.deps.base_url}/reports/trial-balance",
         params={"fy_id": fy_id},
@@ -121,6 +127,7 @@ async def _get_profit_loss(ctx: RunContext[StowDeps], fy_id: int) -> dict:
     Args:
         fy_id: Financial year ID
     """
+    await emit("Generating P&L report")
     r = await ctx.deps.http_client.get(
         f"{ctx.deps.base_url}/reports/profit-loss",
         params={"fy_id": fy_id},
@@ -135,6 +142,7 @@ async def _get_balance_sheet(ctx: RunContext[StowDeps], fy_id: int) -> dict:
     Args:
         fy_id: Financial year ID
     """
+    await emit("Generating balance sheet")
     r = await ctx.deps.http_client.get(
         f"{ctx.deps.base_url}/reports/balance-sheet",
         params={"fy_id": fy_id},
@@ -149,6 +157,7 @@ async def _get_cash_flow(ctx: RunContext[StowDeps], fy_id: int) -> dict:
     Args:
         fy_id: Financial year ID
     """
+    await emit("Generating cash flow statement")
     r = await ctx.deps.http_client.get(
         f"{ctx.deps.base_url}/reports/cash-flow",
         params={"fy_id": fy_id},

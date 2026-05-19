@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Callable
 
 from aiogram import Dispatcher
@@ -42,16 +43,43 @@ _history: dict[int, list] = {}
 def _get_orchestrator_runner() -> Callable:
     from agent.orchestrator import build_orchestrator
     from agent.deps import StowDeps
+    import asyncio
     import httpx
 
     _orch = build_orchestrator()
 
-    async def run(prompt: str | list, user_id: int) -> str:
+    async def _keep_typing(bot, chat_id: int, stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                await bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    async def run(prompt: str | list, user_id: int, message: object | None = None) -> str:
         history = _history.get(user_id, [])
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             deps = StowDeps.build()
             deps.http_client = client
-            result = await _orch.run(prompt, deps=deps, message_history=history)
+
+            stop_typing = asyncio.Event()
+            typing_task = None
+            if message is not None:
+                try:
+                    typing_task = asyncio.create_task(
+                        _keep_typing(message.bot, message.chat.id, stop_typing)  # type: ignore[union-attr]
+                    )
+                except Exception:
+                    pass
+
+            try:
+                result = await _orch.run(prompt, deps=deps, message_history=history,
+                                         model_settings={"max_tokens": 4096})
+            finally:
+                stop_typing.set()
+                if typing_task is not None:
+                    typing_task.cancel()
+
             _history[user_id] = result.all_messages()
             return result.output
 
@@ -93,14 +121,14 @@ def register_handlers(dp: Dispatcher) -> None:
     async def cmd_balance(message: Message) -> None:
         if message.from_user is None:
             return
-        reply = await _run("/balance", message.from_user.id)
+        reply = await _run("/balance", message.from_user.id, message)
         await _send_reply(message, reply, message.from_user.id)
 
     @dp.message(Command("recurring"))
     async def cmd_recurring(message: Message) -> None:
         if message.from_user is None:
             return
-        reply = await _run("/recurring", message.from_user.id)
+        reply = await _run("/recurring", message.from_user.id, message)
         await _send_reply(message, reply, message.from_user.id)
 
     @dp.message(Command("import"))
@@ -119,10 +147,10 @@ def register_handlers(dp: Dispatcher) -> None:
             file = await message.bot.get_file(photo.file_id)  # type: ignore[union-attr]
             file_bytes = await message.bot.download_file(file.file_path)  # type: ignore[union-attr]
             prompt = [
-                BinaryContent(data=file_bytes.read(), media_type="image/jpeg"),
                 message.caption or "Process this payment screenshot",
+                BinaryContent(data=file_bytes.read(), media_type="image/jpeg"),
             ]
-            reply = await _run(prompt, user_id)
+            reply = await _run(prompt, user_id, message)
             await _send_reply(message, reply, user_id)
 
         elif message.document and message.document.file_name and message.document.file_name.lower().endswith(".pdf"):
@@ -135,27 +163,50 @@ def register_handlers(dp: Dispatcher) -> None:
             base_url = _os.environ.get("STOW_BASE_URL", "http://localhost:8000")
             async with _httpx.AsyncClient(timeout=120.0) as _client:
                 prompt = await _upload_pdf_to_batch(file_bytes.read(), fname, _client, base_url)
-            reply = await _run(prompt, user_id)
+            reply = await _run(prompt, user_id, message)
             await _send_reply(message, reply, user_id)
 
         elif message.text:
-            reply = await _run(message.text, user_id)
+            reply = await _run(message.text, user_id, message)
             await _send_reply(message, reply, user_id)
 
     @dp.callback_query()
     async def handle_callback(callback: CallbackQuery) -> None:
         if callback.data and callback.from_user:
             user_id = callback.from_user.id
-            reply = await _run(callback.data, user_id)
+            reply = await _run(callback.data, user_id, callback.message)
             await _send_reply(callback.message, reply, user_id)  # type: ignore[arg-type]
         await callback.answer()
+
+
+def _md_to_html(text: str) -> str:
+    """Convert LLM markdown output to Telegram-compatible HTML."""
+    import html
+    import markdown as _md
+
+    # Strip PROPOSAL: lines (handled separately as keyboard)
+    lines = [l for l in text.splitlines() if not l.startswith("PROPOSAL:")]
+    text = "\n".join(lines)
+
+    # Convert to HTML, then strip tags Telegram doesn't support
+    raw = _md.markdown(text, extensions=["fenced_code", "tables"])
+
+    # Telegram HTML supports: b, strong, i, em, u, s, code, pre, a, blockquote
+    # Strip unsupported tags (h1-h6 → b, others removed)
+    raw = re.sub(r"<h[1-6][^>]*>(.*?)</h[1-6]>", r"<b>\1</b>", raw, flags=re.S)
+    raw = re.sub(r"<(ul|ol|li|p|div|span|table|thead|tbody|tr|th|td)[^>]*>", "", raw)
+    raw = re.sub(r"</(ul|ol|li|p|div|span|table|thead|tbody|tr|th|td)>", "\n", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw).strip()
+    return raw
 
 
 async def _send_reply(message: Message, text: str, user_id: int) -> None:
     """Send reply, attaching an inline keyboard when the response is a proposal."""
     proposal, display = parse_proposal(text)
+    body = display or text
+    html_body = _md_to_html(body)
     if proposal:
         keyboard = confirm_decline_keyboard(confirm_data="confirm", decline_data="decline")
-        await message.answer(display or text, reply_markup=keyboard)
+        await message.answer(html_body, reply_markup=keyboard, parse_mode="HTML")
     else:
-        await message.answer(text)
+        await message.answer(html_body, parse_mode="HTML")
