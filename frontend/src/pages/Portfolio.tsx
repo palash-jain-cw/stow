@@ -227,10 +227,10 @@ function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableP
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-zinc-700">{rupees(avgNav)}</td>
                   <td className="px-3 py-3 text-right font-mono text-zinc-700">
-                    <MonoAmount paise={totalCostBasis} />
+                    <MonoAmount amount={totalCostBasis} />
                   </td>
                   <td className="px-3 py-3 text-right font-mono text-zinc-700">
-                    {totalCurrentValue !== null ? <MonoAmount paise={totalCurrentValue} /> : <span className="text-zinc-400">—</span>}
+                    {totalCurrentValue !== null ? <MonoAmount amount={totalCurrentValue} /> : <span className="text-zinc-400">—</span>}
                   </td>
                   <td className="px-3 py-3 text-right font-mono">
                     <GainDisplay paise={totalUnrealizedGain} />
@@ -298,12 +298,12 @@ function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableP
             <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold text-sm">
               <td className="px-3 py-2" colSpan={3}>Total</td>
               <td className="px-3 py-2 text-right font-mono">
-                <MonoAmount paise={items.reduce((s, { lots }) =>
+                <MonoAmount amount={items.reduce((s, { lots }) =>
                   s + lots.filter(l => l.remaining_units > 0).reduce((a, l) => a + l.cost_basis, 0), 0)} />
               </td>
               <td className="px-3 py-2 text-right font-mono">
                 {items.every(({ lots }) => lots.filter(l => l.remaining_units > 0).every(l => l.current_value !== null)) ? (
-                  <MonoAmount paise={items.reduce((s, { lots }) =>
+                  <MonoAmount amount={items.reduce((s, { lots }) =>
                     s + lots.filter(l => l.remaining_units > 0).reduce((a, l) => a + (l.current_value ?? 0), 0), 0)} />
                 ) : <span className="text-zinc-400">—</span>}
               </td>
@@ -372,11 +372,11 @@ function FdTab({ fds, isLoading }: { fds: FdListItemOut[]; isLoading: boolean })
                   onClick={() => toggle(fd.account_id)}
                 >
                   <td className="px-3 py-3 font-medium text-zinc-900">{fd.name}</td>
-                  <td className="px-3 py-3 text-right font-mono"><MonoAmount paise={fd.principal} /></td>
+                  <td className="px-3 py-3 text-right font-mono"><MonoAmount amount={fd.principal} /></td>
                   <td className="px-3 py-3 text-right font-mono">{(fd.interest_rate / 100).toFixed(2)}%</td>
                   <td className="px-3 py-3 text-right text-zinc-600">{formatDate(fd.start_date)}</td>
                   <td className="px-3 py-3 text-right text-zinc-600">{formatDate(fd.maturity_date)}</td>
-                  <td className="px-3 py-3 text-right font-mono"><MonoAmount paise={fd.accrued_interest} /></td>
+                  <td className="px-3 py-3 text-right font-mono"><MonoAmount amount={fd.accrued_interest} /></td>
                   <td className="px-3 py-3 text-center"><FdStatusBadge fd={fd} /></td>
                   <td className="px-3 py-3 text-zinc-400">
                     {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -407,7 +407,7 @@ function FdTab({ fds, isLoading }: { fds: FdListItemOut[]; isLoading: boolean })
                                 </div>
                                 <div>
                                   <dt className="text-zinc-400 text-xs">Maturity amount</dt>
-                                  <dd className="font-mono font-medium text-zinc-800"><MonoAmount paise={maturityAmount} /></dd>
+                                  <dd className="font-mono font-medium text-zinc-800"><MonoAmount amount={maturityAmount} /></dd>
                                 </div>
                                 <div>
                                   <dt className="text-zinc-400 text-xs">Days to maturity</dt>

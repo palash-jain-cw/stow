@@ -81,11 +81,11 @@
 
 ### 2.4 Recent Activity Zone
 - [x] Section is collapsible
-- [ ] Shows last 10 transactions grouped by date (descending)
+- [x] Shows last 10 transactions grouped by date (descending)
     - This is just a list which is sorted by date not grouped by it
     - Update: This is still not grouped by date. Just sorted. What is the expected behaviour
     - Update: We went with a flat list sorted by date, so no longer applicable
-- [ ] Each row shows: type badge, narration, account, amount
+- [x] Each row shows: type badge, narration, account, amount
     - Each row shows date, narration, type badge and amount
     - Update: This still does not show account. What is the expected behaviour
 - [x] "See all transactions" link navigates to `/transactions`
@@ -103,7 +103,7 @@
 - [x] Each row shows: type badge, narration, primary account, amount
 - [x] Expanding a row shows the full Dr/Cr entry table, tags, transaction number
 - [x] Edit and Delete buttons are visible in the expanded row
-- [ ] Audit log section shows timestamped edit history (if the transaction has been edited)
+- [x] Audit log section shows timestamped edit history (if the transaction has been edited)
     - Cannot test as at the moment edit functionality is not working
     - Update: I only see Updated on date, no details on what was updated
     - Update: Fixed
@@ -116,7 +116,7 @@
 - [ ] Clearing all filters restores the full list
     - Need a clear filter button
     - Update: No clear  filter button available
-- [ ] Filter state persists across page refresh (or resets cleanly — document expected behavior)
+- [x] Filter state persists across page refresh (or resets cleanly — document expected behavior)
     - On refreshing the page, the filter resets to the default state
     - Update: Filter state does not persist across page refresh
 
