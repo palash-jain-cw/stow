@@ -10,6 +10,7 @@ interface FinancialYear { id: number; start_date: string; end_date: string; stat
 interface AccountGroup { id: number; name: string; nature: string }
 interface AccountOut { id: number; name: string }
 interface AiConnectionResult { ok: boolean; model: string | null; latency_ms: number | null; error: string | null }
+interface TelegramTestResult { ok: boolean; bot_username: string | null; bot_name: string | null; error: string | null }
 
 // ── FY helpers ────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ function StepFinancialYear({ onNext }: { onNext: (fyId: number, startDate: strin
 
   return (
     <StepCard>
-      <ProgressDots current={2} total={6} />
+      <ProgressDots current={2} total={7} />
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">Which financial year are you starting with?</h1>
       <p className="text-sm text-zinc-500 mb-6">
         This sets the period for all your reports. You can open additional years later in Settings.
@@ -233,7 +234,7 @@ function StepBankAccounts({ onNext, onSkip }: {
 
   return (
     <StepCard>
-      <ProgressDots current={3} total={6} />
+      <ProgressDots current={3} total={7} />
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">Add your bank accounts</h1>
       <p className="text-sm text-zinc-500 mb-6">
         Add the accounts you use day-to-day. You can always add more in Accounts.
@@ -320,7 +321,7 @@ function StepOpeningBalances({ accounts, fyId, fyStartDate, onNext, onSkip }: {
 
   return (
     <StepCard>
-      <ProgressDots current={4} total={6} />
+      <ProgressDots current={4} total={7} />
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">What are the current balances?</h1>
       <p className="text-sm text-zinc-500 mb-6">
         Balances as at {formatDate(fyStartDate)}. Leave blank if an account is empty.
@@ -394,7 +395,7 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
 
   return (
     <StepCard>
-      <ProgressDots current={5} total={6} />
+      <ProgressDots current={5} total={7} />
       <h1 className="text-xl font-semibold text-zinc-900 mb-1">Connect an AI model</h1>
       <p className="text-sm text-zinc-500 mb-1">
         Stow uses a local OpenAI-compatible server for natural language transaction entry and smart account suggestions during bank import.
@@ -469,10 +470,101 @@ function StepAi({ onNext, onSkip }: { onNext: (model: string) => void; onSkip: (
   )
 }
 
-// ── Step 6: Done ──────────────────────────────────────────────────────────────
+// ── Step 6: Telegram ──────────────────────────────────────────────────────────
 
-function StepDone({ fyLabel: fy, accountCount, llmModel, onFinish }: {
-  fyLabel: string; accountCount: number; llmModel: string | null
+function StepTelegram({ onNext, onSkip }: { onNext: (botUsername: string | null) => void; onSkip: () => void }) {
+  const [botToken, setBotToken] = useState('')
+  const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
+  const [connMsg, setConnMsg] = useState('Not tested')
+  const [saving, setSaving] = useState(false)
+
+  const testConnection = async () => {
+    setConnStatus('loading')
+    setConnMsg('Testing…')
+    try {
+      const result = await api.post<TelegramTestResult>('/telegram/test-connection', { bot_token: botToken })
+      if (result.ok) {
+        setConnStatus('ok')
+        const label = result.bot_username ? `@${result.bot_username}` : result.bot_name ?? 'Bot'
+        setConnMsg(`Connected · ${label}`)
+      } else {
+        setConnStatus('fail')
+        setConnMsg(result.error ?? 'Connection failed')
+      }
+    } catch (e: unknown) {
+      setConnStatus('fail')
+      setConnMsg(e instanceof Error ? e.message : 'Connection failed')
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const saved = await api.post<{ bot_username: string | null }>('/telegram/config', { bot_token: botToken })
+      onNext(saved.bot_username)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <StepCard>
+      <ProgressDots current={6} total={7} />
+      <h1 className="text-xl font-semibold text-zinc-900 mb-1">Connect Telegram</h1>
+      <p className="text-sm text-zinc-500 mb-1">
+        Log transactions, check balances, and import bank statements from Telegram chat.
+      </p>
+      <p className="text-xs text-zinc-400 mb-6">Optional — you can set this up later in Settings.</p>
+
+      <div className="space-y-4 mb-5">
+        <div>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">
+            Bot token <code className="ml-1 font-mono text-zinc-400 text-[10px]">TELEGRAM_BOT_TOKEN</code>
+          </label>
+          <input
+            type="password"
+            className="w-full border border-zinc-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            placeholder="123456789:ABCdef..."
+            value={botToken}
+            onChange={e => setBotToken(e.target.value)}
+          />
+          <p className="text-xs text-zinc-400 mt-1">
+            Create a bot with <span className="font-medium">@BotFather</span>, then paste the token here.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={testConnection}
+            disabled={connStatus === 'loading' || !botToken.trim()}
+            className="px-3 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            Test connection
+          </button>
+          <div className="flex items-center gap-1.5 text-xs">
+            {connStatus === 'loading' && <Loader2 size={13} className="animate-spin text-zinc-400" />}
+            {connStatus === 'ok' && <CheckCircle2 size={13} className="text-emerald-600" />}
+            {connStatus === 'fail' && <XCircle size={13} className="text-red-500" />}
+            <span className={
+              connStatus === 'ok' ? 'text-emerald-600' :
+              connStatus === 'fail' ? 'text-red-500' : 'text-zinc-400'
+            }>{connMsg}</span>
+          </div>
+        </div>
+      </div>
+
+      <PrimaryButton onClick={handleSave} disabled={saving || !botToken.trim()}>
+        {saving ? 'Saving…' : 'Save & continue'}
+      </PrimaryButton>
+      <SkipLink onClick={onSkip} label="Skip — I'll set this up later" />
+    </StepCard>
+  )
+}
+
+// ── Step 7: Done ──────────────────────────────────────────────────────────────
+
+function StepDone({ fyLabel: fy, accountCount, llmModel, telegramBot, onFinish }: {
+  fyLabel: string; accountCount: number; llmModel: string | null; telegramBot: string | null
   onFinish: (dest: '/' | '/transactions') => void
 }) {
   return (
@@ -492,6 +584,9 @@ function StepDone({ fyLabel: fy, accountCount, llmModel, onFinish }: {
           </p>
           {llmModel && (
             <p>AI connected: <span className="text-zinc-700 font-medium">{llmModel}</span></p>
+          )}
+          {telegramBot && (
+            <p>Telegram: <span className="text-zinc-700 font-medium">@{telegramBot}</span></p>
           )}
         </div>
 
@@ -535,12 +630,13 @@ export default function Onboarding() {
     }
   }, [isSuccess, fys, navigate])
 
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5 | 6>(1)
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1)
   const [fyId, setFyId] = useState<number | null>(null)
   const [fyStartDate, setFyStartDate] = useState('')
   const [fyLabelStr, setFyLabelStr] = useState('')
   const [createdAccounts, setCreatedAccounts] = useState<Array<{ id: number; name: string }>>([])
   const [llmModel, setLlmModel] = useState<string | null>(null)
+  const [telegramBot, setTelegramBot] = useState<string | null>(null)
 
   const afterFy = (id: number, startDate: string, label: string) => {
     // Don't invalidate here — that would trigger the reverse guard and skip steps 3-6.
@@ -568,6 +664,13 @@ export default function Onboarding() {
 
   const skipAi = () => setStep(6)
 
+  const afterTelegram = (botUsername: string | null) => {
+    setTelegramBot(botUsername)
+    setStep(7)
+  }
+
+  const skipTelegram = () => setStep(7)
+
   // Await invalidation before navigating so RequireSetup sees the new FY in cache
   const onFinish = async (dest: string) => {
     await qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
@@ -594,11 +697,14 @@ export default function Onboarding() {
 
   if (step === 5) return <StepAi onNext={afterAi} onSkip={skipAi} />
 
+  if (step === 6) return <StepTelegram onNext={afterTelegram} onSkip={skipTelegram} />
+
   return (
     <StepDone
       fyLabel={fyLabelStr}
       accountCount={createdAccounts.length}
       llmModel={llmModel}
+      telegramBot={telegramBot}
       onFinish={onFinish}
     />
   )

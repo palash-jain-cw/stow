@@ -50,6 +50,19 @@ def test_post_config_persists_and_get_reads_it(client, isolated_config):
     assert isolated_config.exists()
 
 
+def test_post_config_preserves_telegram_section(client, isolated_config):
+    isolated_config.parent.mkdir(parents=True, exist_ok=True)
+    isolated_config.write_bytes(
+        b'[telegram]\nbot_token = "123456:ABC"\n\n[llm]\nmodel = "old-model"\n'
+    )
+    r = client.post("/ai/config", json={"base_url": "http://ollama:11434/v1", "model": "new-model"})
+    assert r.status_code == 200
+
+    saved = isolated_config.read_text()
+    assert 'bot_token = "123456:ABC"' in saved
+    assert 'model = "new-model"' in saved
+
+
 # ---------------------------------------------------------------------------
 # Slice 3: POST /ai/test-connection — happy path
 # ---------------------------------------------------------------------------

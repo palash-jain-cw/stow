@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 import tomli_w
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path.home() / ".stow" / "config"
 
@@ -29,13 +31,15 @@ def write_config(base_url: str, model: str, api_key: str = "") -> None:
     data: dict = {}
     if _CONFIG_PATH.exists():
         with open(_CONFIG_PATH, "rb") as f:
-            data = tomllib.load(f).get("llm", {})
-    data["base_url"] = base_url
-    data["model"] = model
+            data = tomllib.load(f)
+    llm = data.setdefault("llm", {})
+    llm["base_url"] = base_url
+    llm["model"] = model
     if api_key:
-        data["api_key"] = api_key
+        llm["api_key"] = api_key
     with open(_CONFIG_PATH, "wb") as f:
-        tomli_w.dump({"llm": data}, f)
+        tomli_w.dump(data, f)
+    logger.info("LLM config saved (model=%s)", model)
 
 
 _DEFAULT_BASE_URL = "http://host.docker.internal:8001/v1"

@@ -7,11 +7,11 @@ import os
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent, ModelMessage
 
 from agent.activity import _progress_queue
 from agent.deps import StowDeps
+from agent.orchestrator import build_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ async def _drain_progress(queue: asyncio.Queue[str | None], websocket: WebSocket
             pass
 
 
-async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
+async def handle_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     message_history: list[ModelMessage] = []
 
@@ -89,11 +89,13 @@ async def handle_websocket(websocket: WebSocket, orchestrator: Agent) -> None:
                 else:
                     prompt = _build_prompt(data)
 
+                active_orchestrator = build_orchestrator()
+
                 queue: asyncio.Queue[str | None] = asyncio.Queue()
                 token = _progress_queue.set(queue)
                 drain = asyncio.create_task(_drain_progress(queue, websocket))
                 try:
-                    result = await orchestrator.run(
+                    result = await active_orchestrator.run(
                         prompt, deps=deps, message_history=message_history,
                         model_settings={"max_tokens": 4096},
                     )

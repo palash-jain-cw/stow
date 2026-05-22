@@ -28,6 +28,7 @@ services:
         condition: service_healthy
     volumes:
       - attachments:/stow/attachments
+      - stow_config:/root/.stow
 
   frontend:
     build:
@@ -53,3 +54,4 @@ services:
 volumes:
   postgres_data:
   attachments:
+  stow_config:

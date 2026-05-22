@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 
@@ -14,6 +15,7 @@ from stow.db import get_session
 from stow.models import Account, Transaction
 
 router = APIRouter(prefix="/ai", tags=["ai"])
+logger = logging.getLogger(__name__)
 
 
 class ConfigOut(BaseModel):
@@ -47,6 +49,12 @@ def get_config():
 @router.post("/config", response_model=ConfigOut)
 def post_config(body: ConfigIn):
     write_config(body.base_url, body.model, body.api_key)
+    try:
+        from agent.transport.telegram.handlers import clear_conversation_history
+
+        clear_conversation_history()
+    except Exception:
+        logger.exception("Failed to clear Telegram conversation history after LLM config save")
     cfg = read_config()
     return ConfigOut(base_url=cfg["base_url"], model=cfg["model"])
 

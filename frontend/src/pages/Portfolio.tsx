@@ -1,16 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
+import { InvestmentTradeSheet } from '../components/InvestmentTradeSheet'
+import { FdSheet } from '../components/FdSheet'
+import type { AccountOption } from '../components/investmentHelpers'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface AccountOut {
-  id: number
-  name: string
-  investment_subtype: string | null
+interface AccountOut extends AccountOption {
   balance: number
 }
 
@@ -172,9 +172,11 @@ interface HoldingsTableProps {
   isLoading: boolean
   unitLabel: string
   navLabel: string
+  onBuy: (account: AccountOut) => void
+  onSell: (account: AccountOut, maxUnitsMilli: number) => void
 }
 
-function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableProps) {
+function HoldingsTable({ items, isLoading, unitLabel, navLabel, onBuy, onSell }: HoldingsTableProps) {
   const [expanded, setExpanded] = useState<number | null>(null)
 
   if (!isLoading && items.length === 0) {
@@ -195,11 +197,12 @@ function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableP
             <th className="text-right px-3 py-2 font-medium text-zinc-500">Current value</th>
             <th className="text-right px-3 py-2 font-medium text-zinc-500">Unrealized</th>
             <th className="text-center px-3 py-2 font-medium text-zinc-500">CG type</th>
+            <th className="text-right px-3 py-2 font-medium text-zinc-500">Actions</th>
             <th className="w-8" />
           </tr>
         </thead>
         <tbody>
-          {isLoading && <LoadingRows cols={8} />}
+          {isLoading && <LoadingRows cols={9} />}
           {items.map(({ account, lots }) => {
             const activeLots = lots.filter(l => l.remaining_units > 0)
             const totalUnits = activeLots.reduce((s, l) => s + l.remaining_units, 0)
@@ -238,12 +241,31 @@ function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableP
                   <td className="px-3 py-3 text-center">
                     <CgPill type={cgType} />
                   </td>
+                  <td className="px-3 py-3 text-right">
+                    <div className="flex justify-end gap-1" onClick={e => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onBuy(account)}
+                        className="text-xs font-medium px-2 py-1 rounded-md border border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-white"
+                      >
+                        Buy
+                      </button>
+                      <button
+                        type="button"
+                        disabled={totalUnits === 0}
+                        onClick={() => onSell(account, totalUnits)}
+                        className="text-xs font-medium px-2 py-1 rounded-md border border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Sell
+                      </button>
+                    </div>
+                  </td>
                   <td className="px-3 py-3 text-zinc-400">
                     {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </td>
                 </tr>
                 <tr key={`${account.id}-lots`} className="border-b border-zinc-100">
-                  <td colSpan={8} className="p-0">
+                  <td colSpan={9} className="p-0">
                     <div
                       className="grid transition-all duration-250 ease-in-out"
                       style={{ gridTemplateRows: isOpen ? '1fr' : '0fr' }}
@@ -313,7 +335,7 @@ function HoldingsTable({ items, isLoading, unitLabel, navLabel }: HoldingsTableP
                     s + lots.filter(l => l.remaining_units > 0).reduce((a, l) => a + (l.unrealized_gain ?? 0), 0), 0)} />
                 ) : <span className="text-zinc-400">—</span>}
               </td>
-              <td colSpan={2} />
+              <td colSpan={3} />
             </tr>
           )}
         </tbody>
@@ -334,7 +356,15 @@ function FdStatusBadge({ fd }: { fd: FdListItemOut }) {
   return <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">Active</span>
 }
 
-function FdTab({ fds, isLoading }: { fds: FdListItemOut[]; isLoading: boolean }) {
+function FdTab({
+  fds,
+  isLoading,
+  onMature,
+}: {
+  fds: FdListItemOut[]
+  isLoading: boolean
+  onMature: (fd: FdListItemOut) => void
+}) {
   const [expanded, setExpanded] = useState<number | null>(null)
 
   if (!isLoading && fds.length === 0) {
@@ -355,11 +385,12 @@ function FdTab({ fds, isLoading }: { fds: FdListItemOut[]; isLoading: boolean })
             <th className="text-right px-3 py-2 font-medium text-zinc-500">Maturity date</th>
             <th className="text-right px-3 py-2 font-medium text-zinc-500">Interest accrued</th>
             <th className="text-center px-3 py-2 font-medium text-zinc-500">Status</th>
+            <th className="text-right px-3 py-2 font-medium text-zinc-500">Actions</th>
             <th className="w-8" />
           </tr>
         </thead>
         <tbody>
-          {isLoading && <LoadingRows cols={8} />}
+          {isLoading && <LoadingRows cols={9} />}
           {fds.map(fd => {
             const isOpen = expanded === fd.account_id
             const isMaturing = fd.status !== 'matured' && fd.days_to_maturity <= 30
@@ -378,12 +409,24 @@ function FdTab({ fds, isLoading }: { fds: FdListItemOut[]; isLoading: boolean })
                   <td className="px-3 py-3 text-right text-zinc-600">{formatDate(fd.maturity_date)}</td>
                   <td className="px-3 py-3 text-right font-mono"><MonoAmount amount={fd.accrued_interest} /></td>
                   <td className="px-3 py-3 text-center"><FdStatusBadge fd={fd} /></td>
+                  <td className="px-3 py-3 text-right">
+                    <div onClick={e => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        disabled={fd.status !== 'active'}
+                        onClick={() => onMature(fd)}
+                        className="text-xs font-medium px-2 py-1 rounded-md border border-zinc-200 text-zinc-600 hover:border-zinc-300 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Mature
+                      </button>
+                    </div>
+                  </td>
                   <td className="px-3 py-3 text-zinc-400">
                     {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </td>
                 </tr>
                 <tr key={`${fd.account_id}-detail`} className="border-b border-zinc-100">
-                  <td colSpan={8} className="p-0">
+                  <td colSpan={9} className="p-0">
                     <div
                       className="grid transition-all duration-250 ease-in-out"
                       style={{ gridTemplateRows: isOpen ? '1fr' : '0fr' }}
@@ -442,11 +485,43 @@ const TABS = [
 
 type TabId = typeof TABS[number]['id']
 
+type TradeSheetState = {
+  mode: 'buy' | 'sell'
+  subtype: 'equity_mf' | 'stock'
+  account?: AccountOut
+  maxUnitsMilli?: number
+} | null
+
+type FdSheetState = {
+  mode: 'open' | 'mature'
+  fd?: FdListItemOut
+} | null
+
 export default function Portfolio() {
   const [searchParams, setSearchParams] = useSearchParams()
   const tab = (searchParams.get('tab') ?? 'mf') as TabId
+  const [tradeSheet, setTradeSheet] = useState<TradeSheetState>(null)
+  const [fdSheet, setFdSheet] = useState<FdSheetState>(null)
 
   const setTab = (t: TabId) => setSearchParams({ tab: t })
+
+  useEffect(() => {
+    const action = searchParams.get('action')
+    if (!action) return
+    if (action === 'buy') {
+      setTradeSheet({
+        mode: 'buy',
+        subtype: tab === 'stocks' ? 'stock' : 'equity_mf',
+      })
+    } else if (action === 'open-fd') {
+      setFdSheet({ mode: 'open' })
+    }
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('action')
+      return next
+    }, { replace: true })
+  }, [searchParams, setSearchParams, tab])
 
   // All accounts (for allocation bar + per-type filtering)
   const { data: accounts = [] } = useQuery<AccountOut[]>({
@@ -491,6 +566,14 @@ export default function Portfolio() {
     enabled: tab === 'fds',
   })
 
+  const openBuySheet = (subtype: 'equity_mf' | 'stock', account?: AccountOut) => {
+    setTradeSheet({ mode: 'buy', subtype, account })
+  }
+
+  const openSellSheet = (account: AccountOut, maxUnitsMilli: number, subtype: 'equity_mf' | 'stock') => {
+    setTradeSheet({ mode: 'sell', subtype, account, maxUnitsMilli })
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-6">
       <h1 className="text-2xl font-semibold text-zinc-900 mb-6">Portfolio</h1>
@@ -516,26 +599,85 @@ export default function Portfolio() {
 
       {/* Tab content */}
       {tab === 'mf' && (
-        <HoldingsTable
-          items={mfPortfolios ?? (mfLoading ? [] : mfAccounts.map(a => ({ account: a, lots: [] })))}
-          isLoading={mfLoading}
-          unitLabel="Units"
-          navLabel="Avg NAV"
-        />
+        <>
+          <div className="flex justify-end mb-4">
+            <button
+              type="button"
+              onClick={() => openBuySheet('equity_mf')}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+            >
+              Record purchase
+            </button>
+          </div>
+          <HoldingsTable
+            items={mfPortfolios ?? (mfLoading ? [] : mfAccounts.map(a => ({ account: a, lots: [] })))}
+            isLoading={mfLoading}
+            unitLabel="Units"
+            navLabel="Avg NAV"
+            onBuy={account => openBuySheet('equity_mf', account)}
+            onSell={(account, maxUnitsMilli) => openSellSheet(account, maxUnitsMilli, 'equity_mf')}
+          />
+        </>
       )}
 
       {tab === 'stocks' && (
-        <HoldingsTable
-          items={stockPortfolios ?? (stockLoading ? [] : stockAccounts.map(a => ({ account: a, lots: [] })))}
-          isLoading={stockLoading}
-          unitLabel="Shares"
-          navLabel="Avg cost"
-        />
+        <>
+          <div className="flex justify-end mb-4">
+            <button
+              type="button"
+              onClick={() => openBuySheet('stock')}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+            >
+              Record purchase
+            </button>
+          </div>
+          <HoldingsTable
+            items={stockPortfolios ?? (stockLoading ? [] : stockAccounts.map(a => ({ account: a, lots: [] })))}
+            isLoading={stockLoading}
+            unitLabel="Shares"
+            navLabel="Avg cost"
+            onBuy={account => openBuySheet('stock', account)}
+            onSell={(account, maxUnitsMilli) => openSellSheet(account, maxUnitsMilli, 'stock')}
+          />
+        </>
       )}
 
       {tab === 'fds' && (
-        <FdTab fds={fds} isLoading={fdsLoading} />
+        <>
+          <div className="flex justify-end mb-4">
+            <button
+              type="button"
+              onClick={() => setFdSheet({ mode: 'open' })}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+            >
+              Open fixed deposit
+            </button>
+          </div>
+          <FdTab
+            fds={fds}
+            isLoading={fdsLoading}
+            onMature={fd => setFdSheet({ mode: 'mature', fd })}
+          />
+        </>
       )}
+
+      <InvestmentTradeSheet
+        open={tradeSheet !== null}
+        onClose={() => setTradeSheet(null)}
+        mode={tradeSheet?.mode ?? 'buy'}
+        subtype={tradeSheet?.subtype ?? 'equity_mf'}
+        account={tradeSheet?.account}
+        maxUnitsMilli={tradeSheet?.maxUnitsMilli}
+        onSaved={() => {}}
+      />
+
+      <FdSheet
+        open={fdSheet !== null}
+        onClose={() => setFdSheet(null)}
+        mode={fdSheet?.mode ?? 'open'}
+        fd={fdSheet?.fd}
+        onSaved={() => {}}
+      />
     </div>
   )
 }

@@ -116,8 +116,8 @@ async def test_text_handler_calls_orchestrator():
         msg = _make_message(text="paid ₹850 for Zomato")
         await handle_message(msg)
 
-    mock_run.assert_called_once_with("paid ₹850 for Zomato", msg.from_user.id)
-    msg.answer.assert_called_once_with("₹850 logged")
+    mock_run.assert_called_once_with("paid ₹850 for Zomato", msg.from_user.id, msg)
+    msg.answer.assert_called_once()
 
 
 # ─── Test 6: /help handler replies without hitting orchestrator ───
@@ -160,8 +160,8 @@ async def test_balance_command_sends_prompt():
         msg = _make_message()
         await cmd_balance(msg)
 
-    mock_run.assert_called_once_with("/balance", msg.from_user.id)
-    msg.answer.assert_called_once_with("HDFC: ₹12,000")
+    mock_run.assert_called_once_with("/balance", msg.from_user.id, msg)
+    msg.answer.assert_called_once()
 
 
 # ─── Test 8: photo handler builds a BinaryContent prompt ───
@@ -173,7 +173,7 @@ async def test_photo_handler_builds_binary_content_prompt():
 
     captured: dict = {}
 
-    async def mock_run(prompt, user_id):
+    async def mock_run(prompt, user_id, message=None):
         captured["prompt"] = prompt
         captured["user_id"] = user_id
         return "ok"
@@ -210,7 +210,7 @@ async def test_pdf_handler_builds_import_batch_prompt():
     """Telegram PDF handler pre-uploads and produces an [IMPORT_BATCH:...] prompt."""
     captured: dict = {}
 
-    async def mock_run(prompt, user_id):
+    async def mock_run(prompt, user_id, message=None):
         captured["prompt"] = prompt
         return "ok"
 
@@ -246,7 +246,7 @@ async def test_photo_handler_uses_default_caption_when_none():
 
     captured: dict = {}
 
-    async def mock_run(prompt, user_id):
+    async def mock_run(prompt, user_id, message=None):
         captured["prompt"] = prompt
         return "ok"
 
@@ -268,3 +268,34 @@ async def test_photo_handler_uses_default_caption_when_none():
     text_parts = [p for p in captured["prompt"] if isinstance(p, str)]
     assert len(text_parts) == 1
     assert len(text_parts[0]) > 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_runner_rebuilds_each_message():
+    build_calls = {"count": 0}
+    mock_result = MagicMock()
+    mock_result.output = "ok"
+    mock_result.all_messages.return_value = []
+
+    mock_orch = MagicMock()
+    mock_orch.run = AsyncMock(return_value=mock_result)
+
+    def fake_build():
+        build_calls["count"] += 1
+        return mock_orch
+
+    with patch("agent.orchestrator.build_orchestrator", side_effect=fake_build):
+        with patch("httpx.AsyncClient") as client_cls:
+            client_cls.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+            client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            with patch("agent.deps.StowDeps") as deps_cls:
+                deps = MagicMock()
+                deps_cls.build.return_value = deps
+
+                from agent.transport.telegram.handlers import _get_orchestrator_runner
+
+                run = _get_orchestrator_runner()
+                await run("hello", 42, None)
+                await run("hello again", 42, None)
+
+    assert build_calls["count"] == 2

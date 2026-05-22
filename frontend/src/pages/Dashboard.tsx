@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { ChevronDown, Plus, Bell, Clock, Repeat, Receipt } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
@@ -171,6 +171,15 @@ function EntryZone({ onManual }: { onManual: () => void }) {
           </div>
           <span className="text-zinc-400 text-sm">New transaction…</span>
         </div>
+      </div>
+      <div className="px-5 pb-4">
+        <Link
+          to="/portfolio?tab=mf&action=buy"
+          className="text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+          onClick={e => e.stopPropagation()}
+        >
+          Or record an investment →
+        </Link>
       </div>
     </div>
   )

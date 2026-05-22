@@ -77,4 +77,7 @@ export const queryKeys = {
   ai: {
     config: () => ['ai', 'config'] as const,
   },
+  telegram: {
+    config: () => ['telegram', 'config'] as const,
+  },
 }

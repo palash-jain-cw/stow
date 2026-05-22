@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 from typing import Callable
 
 from aiogram import Dispatcher
@@ -40,13 +41,17 @@ _SLASH_PROMPTS: dict[str, str] = {
 _history: dict[int, list] = {}
 
 
+def clear_conversation_history() -> None:
+    """Drop cached Telegram message history after LLM config changes."""
+    _history.clear()
+    logger.info("Telegram conversation history cleared after LLM config change")
+
+
 def _get_orchestrator_runner() -> Callable:
     from agent.orchestrator import build_orchestrator
     from agent.deps import StowDeps
     import asyncio
     import httpx
-
-    _orch = build_orchestrator()
 
     async def _keep_typing(bot, chat_id: int, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -57,37 +62,64 @@ def _get_orchestrator_runner() -> Callable:
             await asyncio.sleep(4)
 
     async def run(prompt: str | list, user_id: int, message: object | None = None) -> str:
-        history = _history.get(user_id, [])
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            deps = StowDeps.build()
-            deps.http_client = client
+        try:
+            orchestrator = build_orchestrator()
+            history = _history.get(user_id, [])
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                deps = StowDeps.build()
+                deps.http_client = client
 
-            stop_typing = asyncio.Event()
-            typing_task = None
-            if message is not None:
+                stop_typing = asyncio.Event()
+                typing_task = None
+                if message is not None:
+                    try:
+                        typing_task = asyncio.create_task(
+                            _keep_typing(message.bot, message.chat.id, stop_typing)  # type: ignore[union-attr]
+                        )
+                    except Exception:
+                        pass
+
                 try:
-                    typing_task = asyncio.create_task(
-                        _keep_typing(message.bot, message.chat.id, stop_typing)  # type: ignore[union-attr]
+                    result = await orchestrator.run(
+                        prompt,
+                        deps=deps,
+                        message_history=history,
+                        model_settings={"max_tokens": 4096},
                     )
-                except Exception:
-                    pass
+                finally:
+                    stop_typing.set()
+                    if typing_task is not None:
+                        typing_task.cancel()
 
-            try:
-                result = await _orch.run(prompt, deps=deps, message_history=history,
-                                         model_settings={"max_tokens": 4096})
-            finally:
-                stop_typing.set()
-                if typing_task is not None:
-                    typing_task.cancel()
-
-            _history[user_id] = result.all_messages()
-            return result.output
+                _history[user_id] = result.all_messages()
+                return result.output
+        except Exception:
+            logger.exception("Telegram orchestrator run failed")
+            return "Sorry, I couldn't process that request. Check Settings → AI / LLM and try again."
 
     return run
 
 
 def register_handlers(dp: Dispatcher) -> None:
     _run = _get_orchestrator_runner()
+
+    @dp.errors()
+    async def on_error(event) -> bool:
+        logger.error(
+            "Telegram handler error for update %s",
+            event.update.update_id if event.update else "?",
+            exc_info=event.exception,
+        )
+        update = event.update
+        if update.message:
+            try:
+                await update.message.answer(
+                    "Sorry, something went wrong while handling your message. "
+                    "Try again or use /help."
+                )
+            except Exception:
+                logger.exception("Failed to send Telegram error reply")
+        return True
 
     @dp.message(Command("start"))
     async def cmd_start(message: Message) -> None:
@@ -96,15 +128,18 @@ def register_handlers(dp: Dispatcher) -> None:
         tg_id = message.from_user.id
         username = message.from_user.username
 
-        with Session(engine) as session:
-            existing = session.exec(
-                select(TelegramUser).where(TelegramUser.telegram_user_id == tg_id)
-            ).first()
-            if existing:
-                existing.username = username
-            else:
-                session.add(TelegramUser(telegram_user_id=tg_id, username=username))
-            session.commit()
+        try:
+            with Session(engine) as session:
+                existing = session.exec(
+                    select(TelegramUser).where(TelegramUser.telegram_user_id == tg_id)
+                ).first()
+                if existing:
+                    existing.username = username
+                else:
+                    session.add(TelegramUser(telegram_user_id=tg_id, username=username))
+                session.commit()
+        except Exception:
+            logger.exception("Failed to register Telegram user %s", tg_id)
 
         _history.pop(tg_id, None)  # fresh session on /start
         await message.answer(

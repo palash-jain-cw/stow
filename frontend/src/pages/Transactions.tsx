@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -582,12 +582,20 @@ export default function Transactions() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-zinc-900">Transactions</h1>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors"
-        >
-          <Plus className="w-4 h-4" /> New Transaction
-        </button>
+        <div className="flex items-center gap-4">
+          <Link
+            to="/portfolio?tab=mf&action=buy"
+            className="text-sm text-zinc-500 hover:text-zinc-800 transition-colors"
+          >
+            Record investment →
+          </Link>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors"
+          >
+            <Plus className="w-4 h-4" /> New Transaction
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

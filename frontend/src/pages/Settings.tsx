@@ -60,6 +60,20 @@ interface ConnectionResult {
   error: string | null
 }
 
+interface TelegramConfig {
+  configured: boolean
+  bot_username: string | null
+  enabled: boolean
+  linked_users: Array<{ telegram_user_id: number; username: string | null }>
+}
+
+interface TelegramTestResult {
+  ok: boolean
+  bot_username: string | null
+  bot_name: string | null
+  error: string | null
+}
+
 interface PreLockCheck {
   unposted_depreciation: Array<{ account_id: number; account_name: string; amount: number }>
 }
@@ -844,6 +858,145 @@ function AiPanel() {
   )
 }
 
+// ── Telegram panel ────────────────────────────────────────────────────────────
+
+function TelegramPanel() {
+  const qc = useQueryClient()
+  const { data: status } = useQuery<TelegramConfig>({
+    queryKey: queryKeys.telegram.config(),
+    queryFn: () => api.get<TelegramConfig>('/telegram/config'),
+  })
+
+  const [botToken, setBotToken] = useState('')
+  const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
+  const [connMsg, setConnMsg] = useState('Not tested')
+  const [saveLabel, setSaveLabel] = useState('Save')
+  const [saveError, setSaveError] = useState('')
+
+  const testConnection = async () => {
+    setConnStatus('loading')
+    setConnMsg('Testing…')
+    try {
+      const result = await api.post<TelegramTestResult>('/telegram/test-connection', { bot_token: botToken })
+      if (result.ok) {
+        setConnStatus('ok')
+        const label = result.bot_username ? `@${result.bot_username}` : result.bot_name ?? 'Bot'
+        setConnMsg(`Connected · ${label}`)
+      } else {
+        setConnStatus('fail')
+        setConnMsg(result.error ?? 'Connection failed')
+      }
+    } catch (e: unknown) {
+      setConnStatus('fail')
+      setConnMsg(e instanceof Error ? e.message : 'Connection failed')
+    }
+  }
+
+  const save = async () => {
+    setSaveError('')
+    try {
+      await api.post('/telegram/config', { bot_token: botToken })
+      qc.invalidateQueries({ queryKey: queryKeys.telegram.config() })
+      setSaveLabel('Saved')
+      setTimeout(() => setSaveLabel('Save'), 1800)
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : 'Failed to save Telegram config')
+    }
+  }
+
+  return (
+    <div className="max-w-md">
+      <div className="mb-5">
+        <h2 className="text-base font-semibold text-zinc-900">Telegram</h2>
+        <p className="text-sm text-zinc-500 mt-0.5">
+          Connect a Telegram bot to log transactions, check balances, and import bank statements from chat.
+        </p>
+      </div>
+
+      {status?.configured && (
+        <div className="mb-5 p-4 bg-zinc-50 rounded-xl text-sm space-y-1">
+          <p>
+            Bot:{' '}
+            <span className="font-medium text-zinc-800">
+              {status.bot_username ? `@${status.bot_username}` : 'Configured'}
+            </span>
+          </p>
+          <p>
+            Polling:{' '}
+            <span className={status.enabled ? 'text-emerald-600 font-medium' : 'text-amber-600 font-medium'}>
+              {status.enabled ? 'Running' : 'Stopped'}
+            </span>
+          </p>
+          {status.configured && !status.enabled && (
+            <p className="text-amber-700 text-xs mt-2">
+              Bot is not running. Re-enter your token below, test the connection, then save again.
+            </p>
+          )}
+          {status.linked_users.length > 0 && (
+            <p className="text-zinc-600">
+              Linked users: {status.linked_users.map(u => u.username ? `@${u.username}` : String(u.telegram_user_id)).join(', ')}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">
+            Bot token <code className="ml-1 font-mono text-zinc-400 text-[10px]">TELEGRAM_BOT_TOKEN</code>
+          </label>
+          <input
+            type="password"
+            className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
+            placeholder="123456789:ABCdef..."
+            value={botToken}
+            onChange={e => setBotToken(e.target.value)}
+          />
+          <p className="text-xs text-zinc-400 mt-1">
+            Create a bot with <span className="font-medium">@BotFather</span> on Telegram, then paste the token here.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            onClick={testConnection}
+            disabled={connStatus === 'loading' || !botToken.trim()}
+            className="px-3 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            Test connection
+          </button>
+          <div className="flex items-center gap-1.5 text-xs">
+            {connStatus === 'loading' && <Loader2 size={13} className="animate-spin text-zinc-400" />}
+            {connStatus === 'ok' && <CheckCircle2 size={13} className="text-emerald-600" />}
+            {connStatus === 'fail' && <XCircle size={13} className="text-red-500" />}
+            <span className={
+              connStatus === 'ok' ? 'text-emerald-600' :
+              connStatus === 'fail' ? 'text-red-500' : 'text-zinc-400'
+            }>{connMsg}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={save}
+          disabled={!botToken.trim()}
+          className="px-4 py-1.5 bg-zinc-900 text-white rounded-lg text-sm hover:bg-zinc-700 disabled:opacity-40"
+        >
+          {saveLabel}
+        </button>
+        {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+      </div>
+
+      <div className="mt-6 p-4 bg-zinc-50 rounded-xl text-xs text-zinc-500 space-y-1">
+        <p className="font-medium text-zinc-700 mb-2">After saving</p>
+        <p>· Open your bot in Telegram and send <code className="font-mono">/start</code></p>
+        <p>· Try natural language: &quot;paid ₹850 for Zomato from HDFC&quot;</p>
+        <p>· Send a bank statement PDF or receipt photo for import</p>
+        <p className="mt-2 text-zinc-400">Token is stored in <code className="font-mono">~/.stow/config</code> and can also be set via environment variable.</p>
+      </div>
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 // ── Reset panel ───────────────────────────────────────────────────────────────
@@ -875,7 +1028,7 @@ function ResetPanel() {
             <p className="text-sm font-semibold text-red-900">Reset app</p>
             <p className="text-xs text-red-700 mt-1">
               Wipes all transactions, accounts, financial years, imports, and rules.
-              Resets to factory state and opens onboarding. Your AI / LLM config is preserved.
+              Resets to factory state and opens onboarding. Your AI / LLM and Telegram config are preserved.
             </p>
           </div>
           <button
@@ -897,7 +1050,7 @@ function ResetPanel() {
           <li>All financial years and opening balances</li>
           <li>All imports, recurring schedules, and merchant rules</li>
         </ul>
-        <p className="text-sm text-zinc-500">Your AI / LLM configuration will be preserved.</p>
+        <p className="text-sm text-zinc-500">Your AI / LLM and Telegram configuration will be preserved.</p>
         <ModalActions
           onCancel={() => setConfirm(false)}
           onConfirm={doReset}
@@ -917,6 +1070,7 @@ const PANELS = [
   { id: 'recurring', label: 'Recurring' },
   { id: 'rules', label: 'Merchant Rules' },
   { id: 'ai', label: 'AI / LLM' },
+  { id: 'telegram', label: 'Telegram' },
   { id: 'reset', label: 'Danger Zone' },
 ] as const
 
@@ -961,6 +1115,7 @@ export default function Settings() {
         {panel === 'recurring' && <RecurringPanel />}
         {panel === 'rules' && <MerchantRulesPanel />}
         {panel === 'ai' && <AiPanel />}
+        {panel === 'telegram' && <TelegramPanel />}
         {panel === 'reset' && <ResetPanel />}
       </main>
     </div>
