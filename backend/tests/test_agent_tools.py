@@ -143,6 +143,9 @@ class TestTransactionTools:
         assert result["narration"] == "Electricity bill"
         assert result["type"] == "payment"
         assert len(result["entries"]) == 2
+        by_account = {e["account_id"]: e["amount"] for e in result["entries"]}
+        assert by_account[bank["id"]] == -240000
+        assert by_account[expense["id"]] == 240000
 
         fetched = await _get_transaction(ctx, result["id"])
         assert fetched["id"] == result["id"]

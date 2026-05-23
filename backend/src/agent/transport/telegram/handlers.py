@@ -62,6 +62,38 @@ def _get_orchestrator_runner() -> Callable:
             await asyncio.sleep(4)
 
     async def run(prompt: str | list, user_id: int, message: object | None = None) -> str:
+        if not isinstance(prompt, str):
+            return await _run_orchestrator(prompt, user_id, message)
+
+        user_key = str(user_id)
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                base_url = StowDeps.build().base_url
+
+                if prompt.startswith("cfm:"):
+                    from agent.transport.proposal import confirm_pending_proposal
+
+                    return await confirm_pending_proposal(
+                        user_key, prompt[4:], client, base_url
+                    )
+
+                if prompt.startswith("dec:"):
+                    from agent.transport.proposal import decline_pending_proposal
+
+                    return decline_pending_proposal(user_key, prompt[4:])
+
+                from agent.transport.proposal import try_handle_proposal_action
+
+                handled = await try_handle_proposal_action(prompt, client, base_url)
+                if handled is not None:
+                    return handled
+
+            return await _run_orchestrator(prompt, user_id, message)
+        except Exception:
+            logger.exception("Telegram message handling failed")
+            return "Sorry, I couldn't process that request. Check Settings → AI / LLM and try again."
+
+    async def _run_orchestrator(prompt: str | list, user_id: int, message: object | None = None) -> str:
         try:
             orchestrator = build_orchestrator()
             history = _history.get(user_id, [])
@@ -237,11 +269,25 @@ def _md_to_html(text: str) -> str:
 
 async def _send_reply(message: Message, text: str, user_id: int) -> None:
     """Send reply, attaching an inline keyboard when the response is a proposal."""
+    from agent.transport.proposal import normalize_proposal, store_pending
+
     proposal, display = parse_proposal(text)
     body = display or text
     html_body = _md_to_html(body)
     if proposal:
-        keyboard = confirm_decline_keyboard(confirm_data="confirm", decline_data="decline")
-        await message.answer(html_body, reply_markup=keyboard, parse_mode="HTML")
+        try:
+            normalize_proposal(proposal)
+            proposal_id = store_pending(str(user_id), proposal)
+            keyboard = confirm_decline_keyboard(
+                confirm_data=f"cfm:{proposal_id}",
+                decline_data=f"dec:{proposal_id}",
+            )
+            await message.answer(html_body, reply_markup=keyboard, parse_mode="HTML")
+        except ValueError:
+            logger.warning("Skipping confirm buttons for invalid proposal: %s", proposal)
+            await message.answer(
+                html_body + "\n\n⚠️ Proposal was incomplete — please describe the transaction again.",
+                parse_mode="HTML",
+            )
     else:
         await message.answer(html_body, parse_mode="HTML")

@@ -14,7 +14,8 @@ You parse, create, query, update, and delete double-entry transactions.
 Key rules:
 - All amounts are in paise (1 INR = 100 paise). Amounts like "₹500" = 50000 paise.
 - Transaction types: payment | receipt | journal | contra
-- Every transaction needs a from_account and to_account (expressed as entries summing to zero).
+- from_account = credited account (money leaves, e.g. bank on a payment)
+- to_account = debited account (money arrives, e.g. expense on a payment)
 
 ## CRITICAL: Proposal-first flow for new transactions — NEVER skip this
 
@@ -108,15 +109,15 @@ async def _create_transaction(
         date_str: ISO date string, e.g. "2026-05-16"
         narration: Description of the transaction
         fy_id: Financial year ID (get from get_active_fy)
-        from_account_id: Source account ID (debit side)
-        to_account_id: Destination account ID (credit side)
+        from_account_id: Source account ID (credit side — money leaves)
+        to_account_id: Destination account ID (debit side — money arrives)
         amount_paise: Amount in paise (positive integer)
         tags: Optional list of tags
     """
     await emit("Creating transaction")
     entries = [
-        {"account_id": from_account_id, "amount": amount_paise},
-        {"account_id": to_account_id, "amount": -amount_paise},
+        {"account_id": from_account_id, "amount": -amount_paise},
+        {"account_id": to_account_id, "amount": amount_paise},
     ]
     r = await ctx.deps.http_client.post(
         f"{ctx.deps.base_url}/transactions",

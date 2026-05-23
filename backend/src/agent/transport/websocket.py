@@ -12,6 +12,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage
 from agent.activity import _progress_queue
 from agent.deps import StowDeps
 from agent.orchestrator import build_orchestrator
+from agent.transport.proposal import try_handle_proposal_action
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,15 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 else:
                     prompt = _build_prompt(data)
 
+                if isinstance(prompt, str):
+                    handled = await try_handle_proposal_action(
+                        prompt, http_client, deps.base_url
+                    )
+                    if handled is not None:
+                        await websocket.send_json({"type": "token", "content": handled})
+                        await websocket.send_json({"type": "done"})
+                        continue
+
                 active_orchestrator = build_orchestrator()
 
                 queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -104,7 +114,7 @@ async def handle_websocket(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "token", "content": output})
                     message_history = result.all_messages()
                 except Exception as exc:
-                    print(f"[WS] exception: {type(exc).__name__}: {exc}", flush=True)
+                    logger.exception("WebSocket orchestrator failed")
                     await websocket.send_json({
                         "type": "token",
                         "content": f"⚠️ Something went wrong — {exc}",

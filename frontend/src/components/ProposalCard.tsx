@@ -32,6 +32,7 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 function formatAmount(paise: number): string {
+  if (!paise || Number.isNaN(paise)) return '—'
   const rupees = paise / 100
   return '₹' + rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -63,7 +64,7 @@ export function ProposalCard({ proposal, display, onAction, disabled = false }: 
       {/* Fields */}
       <div className="px-3 py-2.5 space-y-1.5">
         <Row label="Type" value={TYPE_LABELS[proposal.type] ?? proposal.type} />
-        <Row label="Amount" value={formatAmount(proposal.amount_paise)} mono />
+        <Row label="Amount" value={formatAmount(proposal.amount_paise ?? (proposal as Proposal & { amount?: number }).amount ?? 0)} mono />
         <Row label="Date" value={formatDate(proposal.date)} />
         <div className="flex items-center gap-1 text-xs text-zinc-700">
           <span className="text-zinc-400 w-14 shrink-0">Route</span>

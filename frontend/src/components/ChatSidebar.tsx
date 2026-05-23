@@ -19,6 +19,24 @@ interface ChatMessage {
 
 const PROPOSAL_PREFIX = 'PROPOSAL:'
 
+function proposalAmount(proposal: Proposal & { amount?: number }): number {
+  return proposal.amount_paise ?? proposal.amount ?? 0
+}
+
+function normalizeProposal(raw: Proposal & { amount?: number }): Proposal {
+  return {
+    ...raw,
+    amount_paise: proposalAmount(raw),
+    narration: raw.narration ?? '',
+    from_account_name: raw.from_account_name ?? '',
+    to_account_name: raw.to_account_name ?? '',
+  }
+}
+
+function buildConfirmMessage(proposal: Proposal & { amount?: number }): string {
+  return `confirm:${JSON.stringify(normalizeProposal(proposal))}`
+}
+
 function parseProposal(content: string): { proposal: Proposal; display: string } | null {
   for (const line of content.split('\n')) {
     if (line.startsWith(PROPOSAL_PREFIX)) {
@@ -200,7 +218,15 @@ export function ChatSidebar() {
                 proposal={msg.proposal}
                 display={msg.proposalDisplay ?? ''}
                 disabled={msg.streaming}
-                onAction={action => send(action)}
+                onAction={action => {
+                  if (action === 'confirm') {
+                    send(buildConfirmMessage(msg.proposal))
+                  } else if (action === 'decline') {
+                    send('decline')
+                  } else {
+                    send(action)
+                  }
+                }}
               />
             )
             : <MessageBubble key={msg.id} message={msg} />
