@@ -8,6 +8,62 @@ from stow.main import app
 from stow.ai_agent import get_ai_agent, ParsedTransaction
 
 
+def test_qwen_model_profile_merges_system_messages():
+    profile = ai_config_module._model_profile("qwen3.6-35b")
+    assert profile is not None
+    assert profile.openai_chat_supports_multiple_system_messages is False
+
+
+def test_model_settings_role_caps():
+    parse_settings = ai_config_module.model_settings("parse")
+    assert parse_settings["max_tokens"] == 512
+    assert parse_settings["thinking"] is False
+
+    orch_settings = ai_config_module.model_settings("orchestrator")
+    assert orch_settings["max_tokens"] == 1024
+
+
+def test_build_model_applies_default_settings(monkeypatch):
+    monkeypatch.setenv("STOW_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    monkeypatch.setenv("STOW_LLM_MODEL", "qwen3.6-35b")
+    model = ai_config_module.build_model()
+    assert model.settings is not None
+    assert model.settings.get("max_tokens") == 1024
+
+
+# ---------------------------------------------------------------------------
+# resolve_llm_base_url — host vs Docker
+# ---------------------------------------------------------------------------
+
+def test_resolve_llm_base_url_maps_docker_host_on_bare_metal(monkeypatch):
+    monkeypatch.setattr(ai_config_module, "_running_in_docker", lambda: False)
+    assert (
+        ai_config_module.resolve_llm_base_url("http://host.docker.internal:8080/v1")
+        == "http://127.0.0.1:8080/v1"
+    )
+    assert (
+        ai_config_module.resolve_llm_base_url("http://host.docker.internal:8081/v1")
+        == "http://127.0.0.1:8080/v1"
+    )
+
+
+def test_resolve_llm_base_url_keeps_localhost_on_bare_metal(monkeypatch):
+    monkeypatch.setattr(ai_config_module, "_running_in_docker", lambda: False)
+    assert ai_config_module.resolve_llm_base_url("http://127.0.0.1:8080/v1") == "http://127.0.0.1:8080/v1"
+
+
+def test_resolve_llm_base_url_rewrites_in_docker(monkeypatch):
+    monkeypatch.setattr(ai_config_module, "_running_in_docker", lambda: True)
+    assert (
+        ai_config_module.resolve_llm_base_url("http://127.0.0.1:8080/v1")
+        == "http://host.docker.internal:8081/v1"
+    )
+    assert (
+        ai_config_module.resolve_llm_base_url("http://host.docker.internal:8080/v1")
+        == "http://host.docker.internal:8081/v1"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Slice 1: GET /ai/config returns env-var values
 # ---------------------------------------------------------------------------

@@ -118,11 +118,10 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
     parseFloat(interestRate) > 0 &&
     startDate !== '' &&
     maturityDate !== '' &&
-    fromAccountId !== '' &&
-    narration.trim() !== ''
+    fromAccountId !== ''
 
   const canSubmitMature =
-    !!activeFy && !!fd && toAccountId !== '' && date !== '' && narration.trim() !== ''
+    !!activeFy && !!fd && toAccountId !== '' && date !== ''
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -333,10 +332,10 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
         )}
 
         <div>
-          <FieldLabel label="Narration" htmlFor="fd-narration" />
+          <FieldLabel label="Narration (optional)" htmlFor="fd-narration" />
           <textarea
             id="fd-narration"
-            aria-label="Narration"
+            aria-label="Narration (optional)"
             rows={2}
             value={narration}
             onChange={e => setNarration(e.target.value)}

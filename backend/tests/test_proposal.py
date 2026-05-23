@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from agent.transport.proposal import (
@@ -10,8 +11,10 @@ from agent.transport.proposal import (
     confirm_pending_proposal,
     decline_pending_proposal,
     execute_proposal,
+    handle_proposal_action,
     normalize_proposal,
     parse_proposal,
+    pop_latest_pending,
     store_pending,
     try_handle_proposal_action,
 )
@@ -84,8 +87,133 @@ class TestNormalizeProposal:
         with pytest.raises(ValueError, match="amount_paise"):
             normalize_proposal({"type": "payment", "date": "2026-05-16"})
 
+    def test_tags_are_normalized(self):
+        raw = {
+            "type": "receipt",
+            "date": "2026-05-16",
+            "amount_paise": 5000000,
+            "from_account_id": 1,
+            "to_account_id": 2,
+            "fy_id": 1,
+            "tags": [" salary ", "Acme", "salary"],
+        }
+        normalized = normalize_proposal(raw)
+        assert normalized["tags"] == ["salary", "Acme"]
+
+    def test_empty_tags_become_none(self):
+        raw = {
+            "type": "payment",
+            "date": "2026-05-16",
+            "amount_paise": 10000,
+            "from_account_id": 1,
+            "to_account_id": 2,
+            "fy_id": 1,
+            "tags": [],
+        }
+        normalized = normalize_proposal(raw)
+        assert normalized["tags"] is None
+
+    def test_invalid_tags_raise(self):
+        raw = {
+            "type": "payment",
+            "date": "2026-05-16",
+            "amount_paise": 10000,
+            "from_account_id": 1,
+            "to_account_id": 2,
+            "fy_id": 1,
+            "tags": "salary",
+        }
+        with pytest.raises(ValueError, match="tags must be a list"):
+            normalize_proposal(raw)
+
 
 class TestProposalActions:
+    @pytest.mark.asyncio
+    async def test_try_handle_plain_confirm_with_pending(self):
+        client = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"number": "PAY-2026-004", "narration": "Blinkit"}
+        client.post = AsyncMock(return_value=response)
+
+        proposal = {
+            "type": "payment",
+            "date": "2026-05-22",
+            "amount_paise": 107400,
+            "narration": "Blinkit",
+            "from_account_id": 1,
+            "to_account_id": 2,
+            "fy_id": 1,
+        }
+        store_pending("session-1", proposal)
+        result = await try_handle_proposal_action(
+            "confirm", client, "http://localhost:8000", user_key="session-1"
+        )
+        assert "PAY-2026-004" in result
+        client.post.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_try_handle_plain_confirm_without_pending(self):
+        client = AsyncMock()
+        result = await handle_proposal_action(
+            "confirm", client, "http://localhost:8000", user_key="session-2"
+        )
+        assert result.kind == "agent"
+        assert "no pending transaction" in result.message.lower()
+        client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_proposal_returns_error_string_on_http_failure(self):
+        client = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "fail",
+            request=MagicMock(),
+            response=MagicMock(status_code=422, text='{"detail":"invalid"}'),
+        )
+        client.post = AsyncMock(return_value=response)
+        result = await execute_proposal(
+            {
+                "type": "payment",
+                "date": "2026-05-16",
+                "amount_paise": 10000,
+                "from_account_id": 1,
+                "to_account_id": 2,
+                "fy_id": 1,
+            },
+            client,
+            "http://localhost:8000",
+        )
+        assert isinstance(result, str)
+        assert result.startswith("Error:")
+
+    @pytest.mark.asyncio
+    async def test_confirm_failure_routes_to_agent(self):
+        client = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "fail",
+            request=MagicMock(),
+            response=MagicMock(status_code=422, text='{"detail":"bad fy"}'),
+        )
+        client.post = AsyncMock(return_value=response)
+        proposal = {
+            "type": "payment",
+            "date": "2026-05-22",
+            "amount_paise": 107400,
+            "narration": "Blinkit",
+            "from_account_id": 1,
+            "to_account_id": 2,
+            "fy_id": 1,
+        }
+        store_pending("session-3", proposal)
+        result = await handle_proposal_action(
+            "confirm", client, "http://localhost:8000", user_key="session-3"
+        )
+        assert result.kind == "agent"
+        assert "posting failed" in result.message.lower()
+        assert "bad fy" in result.message.lower()
+
     @pytest.mark.asyncio
     async def test_try_handle_decline(self):
         client = AsyncMock()
@@ -129,7 +257,25 @@ class TestProposalActions:
         }
         proposal_id = store_pending("42", proposal)
         result = await confirm_pending_proposal("42", proposal_id, client, "http://localhost:8000")
-        assert "PAY-2026-002" in result
+        assert result.kind == "reply"
+        assert "PAY-2026-002" in result.message
+
+    def test_pop_latest_pending(self):
+        store_pending(
+            "9",
+            {
+                "type": "payment",
+                "date": "2026-05-16",
+                "amount_paise": 10000,
+                "from_account_id": 1,
+                "to_account_id": 2,
+                "fy_id": 1,
+            },
+        )
+        latest = pop_latest_pending("9")
+        assert latest is not None
+        assert latest["amount_paise"] == 10000
+        assert pop_latest_pending("9") is None
 
     def test_decline_pending(self):
         proposal_id = store_pending(
@@ -173,3 +319,50 @@ class TestProposalActions:
             {"account_id": 5, "amount": -25000},
             {"account_id": 9, "amount": 25000},
         ]
+        assert "tags" not in payload
+
+    @pytest.mark.asyncio
+    async def test_execute_proposal_includes_tags_when_present(self):
+        client = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"number": "REC-2026-001"}
+        client.post = AsyncMock(return_value=response)
+
+        await execute_proposal(
+            {
+                "type": "receipt",
+                "date": "2026-05-16",
+                "amount_paise": 5000000,
+                "narration": "Salary",
+                "from_account_id": 5,
+                "to_account_id": 9,
+                "fy_id": 2,
+                "tags": ["salary", "acme"],
+            },
+            client,
+            "http://localhost:8000",
+        )
+
+        payload = client.post.await_args.kwargs["json"]
+        assert payload["tags"] == ["salary", "acme"]
+
+    @pytest.mark.asyncio
+    async def test_confirm_json_with_tags_posts_transaction(self):
+        client = AsyncMock()
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"number": "REC-2026-002", "narration": "Salary"}
+        client.post = AsyncMock(return_value=response)
+
+        proposal = (
+            '{"type":"receipt","date":"2026-05-16","amount_paise":5000000,'
+            '"narration":"Salary","from_account_id":1,"to_account_id":2,"fy_id":1,'
+            '"tags":["salary","acme"]}'
+        )
+        result = await try_handle_proposal_action(
+            f"confirm:{proposal}", client, "http://localhost:8000"
+        )
+        assert "REC-2026-002" in result
+        payload = client.post.await_args.kwargs["json"]
+        assert payload["tags"] == ["salary", "acme"]

@@ -18,6 +18,7 @@ import { MonoAmount } from '../components/MonoAmount'
 import { TxnBadge } from '../components/TxnBadge'
 import { EmptyState } from '../components/EmptyState'
 import { TransactionEntrySheet } from '../components/TransactionEntrySheet'
+import { signedTxnDisplayAmount, transactionAbsoluteAmount } from '../components/txnDisplay'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -99,9 +100,7 @@ function formatAuditTime(s: string): string {
 
 // Primary display amount for a transaction row: the largest absolute debit (positive)
 function primaryAmount(txn: TransactionOut): number {
-  const debits = txn.entries.filter(e => e.amount > 0)
-  if (!debits.length) return Math.abs(txn.entries[0]?.amount ?? 0)
-  return Math.max(...debits.map(e => e.amount))
+  return transactionAbsoluteAmount(txn.entries)
 }
 
 // Primary account name: the debit (To) account
@@ -272,6 +271,7 @@ function TxnRow({
   onDelete: () => void
 }) {
   const amount = primaryAmount(txn)
+  const { amount: displayAmt, colored } = signedTxnDisplayAmount(txn.type, amount)
   const account = primaryAccount(txn)
 
   return (
@@ -285,7 +285,7 @@ function TxnRow({
           <p className="text-sm font-medium text-zinc-800 truncate">{txn.narration}</p>
           <p className="text-xs text-zinc-400 mt-0.5 truncate">{account}</p>
         </div>
-        <MonoAmount amount={amount} colored className="text-sm shrink-0" />
+        <MonoAmount amount={displayAmt} colored={colored} className="text-sm shrink-0" />
         {expanded
           ? <ChevronUp className="w-4 h-4 text-zinc-300 shrink-0" />
           : <ChevronRight className="w-4 h-4 text-zinc-300 shrink-0" />
@@ -528,6 +528,7 @@ export default function Transactions() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
       qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+      qc.invalidateQueries({ queryKey: ['portfolio'] })
       setDeleteTarget(null)
       if (expandedId === deleteTarget?.id) setExpandedId(null)
     },
@@ -658,6 +659,8 @@ export default function Transactions() {
         editTxn={editTxn}
         onSaved={() => {
           qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
+          qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+          qc.invalidateQueries({ queryKey: ['portfolio'] })
         }}
       />
 

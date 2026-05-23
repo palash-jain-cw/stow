@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { Check, X, Pencil, ArrowRight } from 'lucide-react'
+import { MonoAmount } from './MonoAmount'
+import { signedTxnDisplayAmount } from './txnDisplay'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -13,6 +15,7 @@ export interface Proposal {
   to_account_id: number
   to_account_name: string
   fy_id: number
+  tags?: string[]
 }
 
 interface ProposalCardProps {
@@ -31,20 +34,20 @@ const TYPE_LABELS: Record<string, string> = {
   contra: 'Contra',
 }
 
-function formatAmount(paise: number): string {
-  if (!paise || Number.isNaN(paise)) return '—'
-  const rupees = paise / 100
-  return '₹' + rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function proposalPaise(proposal: Proposal & { amount?: number }): number {
+  return proposal.amount_paise ?? proposal.amount ?? 0
 }
 
 // ── ProposalCard ───────────────────────────────────────────────────────────
 
 export function ProposalCard({ proposal, display, onAction, disabled = false }: ProposalCardProps) {
   const [acted, setAct] = useState<string | null>(null)
+  const paise = proposalPaise(proposal)
+  const { amount: displayAmt, colored } = signedTxnDisplayAmount(proposal.type, paise)
 
   function handleAction(action: string) {
     if (acted || disabled) return
@@ -64,7 +67,14 @@ export function ProposalCard({ proposal, display, onAction, disabled = false }: 
       {/* Fields */}
       <div className="px-3 py-2.5 space-y-1.5">
         <Row label="Type" value={TYPE_LABELS[proposal.type] ?? proposal.type} />
-        <Row label="Amount" value={formatAmount(proposal.amount_paise ?? (proposal as Proposal & { amount?: number }).amount ?? 0)} mono />
+        <div className="flex items-baseline gap-2 text-xs">
+          <span className="text-zinc-400 w-14 shrink-0">Amount</span>
+          {paise > 0 ? (
+            <MonoAmount amount={displayAmt} colored={colored} className="text-xs" />
+          ) : (
+            <span className="text-zinc-800 font-medium">—</span>
+          )}
+        </div>
         <Row label="Date" value={formatDate(proposal.date)} />
         <div className="flex items-center gap-1 text-xs text-zinc-700">
           <span className="text-zinc-400 w-14 shrink-0">Route</span>
@@ -74,6 +84,21 @@ export function ProposalCard({ proposal, display, onAction, disabled = false }: 
         </div>
         {proposal.narration && (
           <Row label="Note" value={proposal.narration} />
+        )}
+        {proposal.tags && proposal.tags.length > 0 && (
+          <div className="flex items-start gap-2 text-xs">
+            <span className="text-zinc-400 w-14 shrink-0 pt-0.5">Tags</span>
+            <div className="flex flex-wrap gap-1">
+              {proposal.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-700 font-medium"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 

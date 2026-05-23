@@ -37,6 +37,7 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["src", "tests/integration"]
 markers = [
     "integration: calls real external APIs — run with --run-integration",
 ]

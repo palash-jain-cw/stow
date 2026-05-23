@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
 from agent.activity import emit
 from agent.deps import StowDeps
+from agent.tool_errors import is_tool_error, stow_delete, stow_get, stow_post, stow_put, tool_safe
 
 _INSTRUCTIONS = """\
 You are the transaction agent for an Indian personal finance system.
@@ -17,6 +19,9 @@ Key rules:
 - from_account = credited account (money leaves, e.g. bank on a payment)
 - to_account = debited account (money arrives, e.g. expense on a payment)
 
+When any tool returns a string starting with "Error:", read the message, fix the issue,
+retry with corrected inputs, or ask the user one clarifying question.
+
 ## CRITICAL: Proposal-first flow for new transactions — NEVER skip this
 
 When asked to record a new transaction from natural language or extracted image data:
@@ -26,15 +31,17 @@ When asked to record a new transaction from natural language or extracted image 
   4. Combine the result into this exact JSON and return it as your output — then STOP:
      {"type":"<type>","date":"<ISO date>","amount_paise":<int>,"narration":"<str>",
       "from_account_id":<int>,"from_account_name":"<str>",
-      "to_account_id":<int>,"to_account_name":"<str>","fy_id":<int>}
+      "to_account_id":<int>,"to_account_name":"<str>","fy_id":<int>,
+      "tags":["<optional>","<tags>"]}
      Note: parse_natural_language returns the field as "amount" (in paise) — rename it to "amount_paise".
+     Include tags from parse_natural_language when present; omit the tags key when empty.
 
 Do NOT call create_transaction during this step. The orchestrator will show the user a
 proposal card and re-invoke you with "confirm: <proposal JSON>" after the user approves.
 
 Only call create_transaction when the message explicitly starts with "confirm:" AND provides
 all required fields. In that case, skip steps 1–4 and call create_transaction directly using
-the provided values.
+the provided values. If create_transaction returns an Error string, diagnose and retry.
 
 ## NEVER handle investment operations
 Do NOT process requests to buy/sell mutual funds, stocks, or open/mature fixed deposits.
@@ -50,47 +57,52 @@ Always return a structured summary of what was done.
 """
 
 
-async def _get_active_fy(ctx: RunContext[StowDeps]) -> dict:
+@tool_safe("get_active_fy")
+async def _get_active_fy(ctx: RunContext[StowDeps]) -> dict | str:
     """Get the currently active financial year."""
     await emit("Looking up financial year")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/financial-years")
-    r.raise_for_status()
-    fys = r.json()
+    fys = await stow_get(ctx.deps, "/financial-years", tool_name="get_active_fy")
+    if is_tool_error(fys):
+        return fys
     active = next((fy for fy in fys if fy["status"] == "active"), None)
     if not active:
         active = next((fy for fy in fys if fy["status"] == "open"), None)
     return active or {}
 
 
-async def _list_accounts(ctx: RunContext[StowDeps], include_archived: bool = False) -> list[dict]:
+@tool_safe("list_accounts")
+async def _list_accounts(ctx: RunContext[StowDeps], include_archived: bool = False) -> list[dict] | str:
     """List all accounts with their current balances."""
     await emit("Fetching accounts")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/accounts",
+    return await stow_get(
+        ctx.deps,
+        "/accounts",
+        tool_name="list_accounts",
         params={"include_archived": include_archived},
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _parse_natural_language(ctx: RunContext[StowDeps], text: str) -> dict:
+@tool_safe("parse_natural_language")
+async def _parse_natural_language(ctx: RunContext[StowDeps], text: str) -> dict | str:
     """Parse a natural language transaction description into a structured proposal.
 
     Args:
         text: Natural language description, e.g. "paid electricity 2400 from HDFC last Tuesday"
 
     Returns:
-        Structured transaction with type, date, amount_paise, narration, from_account_id, to_account_id.
+        Structured transaction with type, date, amount (paise), narration, from_account_id,
+        to_account_id, and optional tags.
     """
     await emit("Parsing transaction")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/ai/parse-transaction",
+    return await stow_post(
+        ctx.deps,
+        "/ai/parse-transaction",
+        tool_name="parse_natural_language",
         json={"text": text},
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("create_transaction")
 async def _create_transaction(
     ctx: RunContext[StowDeps],
     type: str,
@@ -101,7 +113,7 @@ async def _create_transaction(
     to_account_id: int,
     amount_paise: int,
     tags: Optional[list[str]] = None,
-) -> dict:
+) -> dict | str:
     """Create a double-entry transaction in the ledger.
 
     Args:
@@ -119,8 +131,10 @@ async def _create_transaction(
         {"account_id": from_account_id, "amount": -amount_paise},
         {"account_id": to_account_id, "amount": amount_paise},
     ]
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/transactions",
+    return await stow_post(
+        ctx.deps,
+        "/transactions",
+        tool_name="create_transaction",
         json={
             "type": type,
             "date": date_str,
@@ -130,16 +144,15 @@ async def _create_transaction(
             "tags": tags,
         },
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("list_transactions")
 async def _list_transactions(
     ctx: RunContext[StowDeps],
     type: Optional[str] = None,
     account_id: Optional[int] = None,
     q: Optional[str] = None,
-) -> list[dict]:
+) -> list[dict] | str:
     """List transactions with optional filters.
 
     Args:
@@ -155,30 +168,28 @@ async def _list_transactions(
         params["account_id"] = account_id
     if q:
         params["q"] = q
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/transactions", params=params)
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/transactions", tool_name="list_transactions", params=params)
 
 
-async def _get_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict:
+@tool_safe("get_transaction")
+async def _get_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict | str:
     """Fetch a single transaction by ID with all its entries.
 
     Args:
         txn_id: Transaction ID
     """
     await emit("Fetching transaction")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/transactions/{txn_id}")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, f"/transactions/{txn_id}", tool_name="get_transaction")
 
 
+@tool_safe("update_transaction")
 async def _update_transaction(
     ctx: RunContext[StowDeps],
     txn_id: int,
     narration: Optional[str] = None,
     date_str: Optional[str] = None,
     tags: Optional[list[str]] = None,
-) -> dict:
+) -> dict | str:
     """Update narration, date, or tags on an existing transaction.
 
     Args:
@@ -195,20 +206,25 @@ async def _update_transaction(
         body["date"] = date_str
     if tags is not None:
         body["tags"] = tags
-    r = await ctx.deps.http_client.put(f"{ctx.deps.base_url}/transactions/{txn_id}", json=body)
-    r.raise_for_status()
-    return r.json()
+    return await stow_put(
+        ctx.deps,
+        f"/transactions/{txn_id}",
+        tool_name="update_transaction",
+        json=body,
+    )
 
 
-async def _delete_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict:
+@tool_safe("delete_transaction")
+async def _delete_transaction(ctx: RunContext[StowDeps], txn_id: int) -> dict | str:
     """Delete a transaction by ID.
 
     Args:
         txn_id: Transaction ID to delete
     """
     await emit("Deleting transaction")
-    r = await ctx.deps.http_client.delete(f"{ctx.deps.base_url}/transactions/{txn_id}")
-    r.raise_for_status()
+    result = await stow_delete(ctx.deps, f"/transactions/{txn_id}", tool_name="delete_transaction")
+    if is_tool_error(result):
+        return result
     return {"deleted": True, "txn_id": txn_id}
 
 

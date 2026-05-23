@@ -13,15 +13,13 @@ import argparse
 import os
 from pathlib import Path
 
-# Load .env from the backend directory so STOW_LLM_* vars are available
-# when running on the host (outside Docker).
-_env_path = Path(__file__).parent.parent / ".env"
-if _env_path.exists():
-    for line in _env_path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
+# Load STOW_LLM_* from repo/backend .env when running on the host (outside Docker).
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from tests.load_env import load_llm_env
+
+load_llm_env()
 
 import httpx
 from pydantic_ai import Agent
@@ -43,6 +41,7 @@ from agent.subagents.recurring import build_recurring_agent
 from agent.subagents.report import build_report_agent
 from agent.subagents.transaction import build_transaction_agent
 from agent.orchestrator import _SYSTEM_PROMPT
+from stow.ai_config import _model_profile, model_settings
 
 
 def _fmt_tool_call(part: ToolCallPart) -> str:
@@ -68,9 +67,15 @@ def _print_trace(messages: list) -> None:
 
 
 def _build_model(llm_url: str, llm_model: str, llm_api_key: str):
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from stow.ai_config import _model_profile
+
     return OpenAIChatModel(
         llm_model,
         provider=OpenAIProvider(base_url=llm_url, api_key=llm_api_key or "not-needed"),
+        profile=_model_profile(llm_model),
+        settings=model_settings("orchestrator"),
     )
 
 
@@ -118,7 +123,12 @@ async def main(base_url: str, llm_url: str, llm_model: str, llm_api_key: str) ->
                 break
 
             try:
-                result = await orchestrator.run(text, deps=deps, message_history=history)
+                result = await orchestrator.run(
+                    text,
+                    deps=deps,
+                    message_history=history,
+                    model_settings=model_settings("orchestrator"),
+                )
             except Exception as exc:
                 print(f"[ERROR] {exc}\n")
                 continue

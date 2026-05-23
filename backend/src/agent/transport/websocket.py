@@ -11,8 +11,15 @@ from pydantic_ai.messages import BinaryContent, ModelMessage
 
 from agent.activity import _progress_queue
 from agent.deps import StowDeps
+from agent.history import trim_message_history
 from agent.orchestrator import build_orchestrator
-from agent.transport.proposal import try_handle_proposal_action
+from agent.transport.proposal import (
+    handle_proposal_action,
+    normalize_proposal,
+    parse_proposal,
+    store_pending,
+)
+from stow.ai_config import model_settings
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +79,7 @@ async def _drain_progress(queue: asyncio.Queue[str | None], websocket: WebSocket
 async def handle_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
     message_history: list[ModelMessage] = []
+    session_key = f"ws:{id(websocket)}"
 
     async with httpx.AsyncClient(timeout=120.0) as http_client:
         deps = StowDeps(
@@ -91,14 +99,20 @@ async def handle_websocket(websocket: WebSocket) -> None:
                     prompt = _build_prompt(data)
 
                 if isinstance(prompt, str):
-                    handled = await try_handle_proposal_action(
-                        prompt, http_client, deps.base_url
+                    action = await handle_proposal_action(
+                        prompt,
+                        http_client,
+                        deps.base_url,
+                        user_key=session_key,
                     )
-                    if handled is not None:
-                        await websocket.send_json({"type": "token", "content": handled})
+                    if action.kind == "reply":
+                        await websocket.send_json({"type": "token", "content": action.message})
                         await websocket.send_json({"type": "done"})
                         continue
+                    if action.kind == "agent":
+                        prompt = action.message
 
+                message_history = trim_message_history(message_history)
                 active_orchestrator = build_orchestrator()
 
                 queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -106,13 +120,24 @@ async def handle_websocket(websocket: WebSocket) -> None:
                 drain = asyncio.create_task(_drain_progress(queue, websocket))
                 try:
                     result = await active_orchestrator.run(
-                        prompt, deps=deps, message_history=message_history,
-                        model_settings={"max_tokens": 4096},
+                        prompt,
+                        deps=deps,
+                        message_history=message_history,
+                        model_settings=model_settings("orchestrator"),
                     )
                     output = str(result.output).strip()
                     if output:
+                        proposal, _ = parse_proposal(output)
+                        if proposal is not None:
+                            try:
+                                normalize_proposal(proposal)
+                                store_pending(session_key, proposal)
+                            except ValueError:
+                                logger.warning(
+                                    "Orchestrator returned incomplete proposal: %s", proposal
+                                )
                         await websocket.send_json({"type": "token", "content": output})
-                    message_history = result.all_messages()
+                    message_history = trim_message_history(result.all_messages())
                 except Exception as exc:
                     logger.exception("WebSocket orchestrator failed")
                     await websocket.send_json({

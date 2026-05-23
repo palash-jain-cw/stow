@@ -81,6 +81,18 @@ def _validate_balance(entries: list[EntryIn]) -> None:
         raise HTTPException(status_code=422, detail="Entries must sum to zero")
 
 
+def _sync_investment_dates(session: Session, txn_id: int, new_date: _date) -> None:
+    """Keep lot acquisition dates and sale CG dates in sync when a txn date is edited."""
+    for lot in session.exec(select(Lot).where(Lot.transaction_id == txn_id)).all():
+        lot.acquisition_date = new_date
+        session.add(lot)
+    for cge in session.exec(
+        select(CapitalGainEntry).where(CapitalGainEntry.sale_transaction_id == txn_id)
+    ).all():
+        cge.sale_date = new_date
+        session.add(cge)
+
+
 @router.post("", response_model=TransactionOut, status_code=201)
 def create_transaction(data: TransactionIn, session: Session = Depends(get_session)):
     fy = session.get(FinancialYear, data.fy_id)
@@ -246,6 +258,9 @@ def update_transaction(
 
     for field, value in data.model_dump(exclude_unset=True, exclude={"entries"}).items():
         setattr(txn, field, value)
+
+    if data.date is not None:
+        _sync_investment_dates(session, txn_id, data.date)
 
     if data.entries is not None:
         _validate_balance(data.entries)

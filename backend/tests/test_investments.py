@@ -67,6 +67,30 @@ def test_buy_creates_lot(client, fy, bank, mf_account):
     assert data["acquisition_date"] == "2025-05-01"
 
 
+def test_buy_without_narration(client, fy, bank, mf_account):
+    resp = client.post(f"/investments/{mf_account['id']}/buy", json={
+        "fy_id": fy["id"],
+        "date": "2025-05-01",
+        "units": 10_000,
+        "cost_per_unit": 100,
+        "bank_account_id": bank["id"],
+    })
+    assert resp.status_code == 201
+    txn = client.get(f"/transactions/{resp.json()['transaction_id']}").json()
+    assert txn["narration"] == ""
+
+
+def test_update_buy_transaction_date_syncs_lot(client, fy, bank, mf_account):
+    lot = buy(client, fy["id"], mf_account["id"], bank["id"], dt="2025-05-01").json()
+    resp = client.put(f"/transactions/{lot['transaction_id']}", json={"date": "2024-06-15"})
+    assert resp.status_code == 200
+    assert resp.json()["date"] == "2024-06-15"
+    holdings = client.get(f"/investments/{mf_account['id']}/holdings").json()
+    assert holdings[0]["acquisition_date"] == "2024-06-15"
+    portfolio = client.get(f"/investments/{mf_account['id']}/portfolio").json()
+    assert portfolio[0]["acquisition_date"] == "2024-06-15"
+
+
 # ── Slice 2: buy posts a balanced transaction ─────────────────────────────────
 
 def test_buy_posts_balanced_transaction(client, fy, bank, mf_account):

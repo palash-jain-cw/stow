@@ -12,6 +12,8 @@ from sqlmodel import Session, select
 
 from agent.transport.proposal import parse_proposal
 from agent.transport.telegram.keyboard import confirm_decline_keyboard
+from agent.history import trim_message_history
+from stow.ai_config import model_settings
 from stow.db import engine
 from stow.models import TelegramUser
 
@@ -73,20 +75,27 @@ def _get_orchestrator_runner() -> Callable:
                 if prompt.startswith("cfm:"):
                     from agent.transport.proposal import confirm_pending_proposal
 
-                    return await confirm_pending_proposal(
+                    action = await confirm_pending_proposal(
                         user_key, prompt[4:], client, base_url
                     )
+                    if action.kind == "agent":
+                        return await _run_orchestrator(action.message, user_id, message)
+                    return action.message
 
                 if prompt.startswith("dec:"):
                     from agent.transport.proposal import decline_pending_proposal
 
                     return decline_pending_proposal(user_key, prompt[4:])
 
-                from agent.transport.proposal import try_handle_proposal_action
+                from agent.transport.proposal import handle_proposal_action
 
-                handled = await try_handle_proposal_action(prompt, client, base_url)
-                if handled is not None:
-                    return handled
+                action = await handle_proposal_action(
+                    prompt, client, base_url, user_key=user_key
+                )
+                if action.kind == "reply":
+                    return action.message
+                if action.kind == "agent":
+                    return await _run_orchestrator(action.message, user_id, message)
 
             return await _run_orchestrator(prompt, user_id, message)
         except Exception:
@@ -96,7 +105,7 @@ def _get_orchestrator_runner() -> Callable:
     async def _run_orchestrator(prompt: str | list, user_id: int, message: object | None = None) -> str:
         try:
             orchestrator = build_orchestrator()
-            history = _history.get(user_id, [])
+            history = trim_message_history(_history.get(user_id, []))
             async with httpx.AsyncClient(timeout=120.0) as client:
                 deps = StowDeps.build()
                 deps.http_client = client
@@ -116,14 +125,14 @@ def _get_orchestrator_runner() -> Callable:
                         prompt,
                         deps=deps,
                         message_history=history,
-                        model_settings={"max_tokens": 4096},
+                        model_settings=model_settings("orchestrator"),
                     )
                 finally:
                     stop_typing.set()
                     if typing_task is not None:
                         typing_task.cancel()
 
-                _history[user_id] = result.all_messages()
+                _history[user_id] = trim_message_history(result.all_messages())
                 return result.output
         except Exception:
             logger.exception("Telegram orchestrator run failed")

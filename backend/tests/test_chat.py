@@ -220,3 +220,103 @@ class TestBuildPrompt:
 
         result = _build_prompt({"type": "text", "content": "hello"})
         assert result == "hello"
+
+
+class TestWebSocketConfirmFlow:
+    """Confirm / decline short-circuit on the chat WebSocket."""
+
+    def test_confirm_json_posts_without_orchestrator(self, client, session):
+        """UI Confirm button sends confirm:{json} — posts directly, no LLM."""
+        import json
+
+        from sqlmodel import select
+
+        from stow.models import Account, FinancialYear
+
+        fy = session.exec(select(FinancialYear).where(FinancialYear.status == "active")).first()
+        from_acc = session.exec(select(Account).where(Account.is_archived == False)).first()  # noqa: E712
+        to_acc = session.exec(
+            select(Account).where(Account.is_archived == False, Account.nature == "expense")  # noqa: E712
+        ).first()
+        assert fy and from_acc and to_acc
+
+        proposal = {
+            "type": "payment",
+            "date": "2026-05-22",
+            "amount_paise": 199,
+            "narration": "ws confirm json test",
+            "from_account_id": from_acc.id,
+            "from_account_name": from_acc.name,
+            "to_account_id": to_acc.id,
+            "to_account_name": to_acc.name,
+            "fy_id": fy.id,
+        }
+
+        with client.websocket_connect("/chat/ws") as ws:
+            ws.send_json({"type": "text", "content": f"confirm:{json.dumps(proposal)}"})
+            tokens = []
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "token":
+                    tokens.append(msg["content"])
+                if msg.get("type") == "done":
+                    break
+            body = "".join(tokens)
+            assert "Posted" in body or "PAY-" in body
+
+    def test_plain_confirm_after_proposal(self, client):
+        """Typed 'confirm' uses pending proposal stored on the same WebSocket session."""
+        import json
+        from unittest.mock import patch
+
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        proposal = {
+            "type": "payment",
+            "date": "2026-05-22",
+            "amount_paise": 201,
+            "narration": "plain confirm test",
+            "from_account_id": 1,
+            "from_account_name": "HDFC",
+            "to_account_id": 2,
+            "to_account_name": "Food",
+            "fy_id": 1,
+        }
+        orch_out = f"PROPOSAL:{json.dumps(proposal)}\n\nReply confirm to post."
+
+        def fake_orch():
+            return Agent(
+                model=TestModel(custom_output_text=orch_out),
+                deps_type=StowDeps,
+                output_type=str,
+            )
+
+        with patch("agent.transport.websocket.build_orchestrator", fake_orch):
+            with client.websocket_connect("/chat/ws") as ws:
+                ws.send_json({"type": "text", "content": "record payment"})
+                while ws.receive_json().get("type") != "done":
+                    pass
+                ws.send_json({"type": "text", "content": "confirm"})
+                tokens = []
+                while True:
+                    msg = ws.receive_json()
+                    if msg.get("type") == "token":
+                        tokens.append(msg["content"])
+                    if msg.get("type") == "done":
+                        break
+                body = "".join(tokens)
+                assert "Posted" in body or "PAY-" in body
+
+    def test_decline_short_circuits(self, client):
+        """Decline does not invoke the orchestrator."""
+        with client.websocket_connect("/chat/ws") as ws:
+            ws.send_json({"type": "text", "content": "decline"})
+            tokens = []
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "token":
+                    tokens.append(msg["content"])
+                if msg.get("type") == "done":
+                    break
+            assert "".join(tokens) == "Transaction discarded."

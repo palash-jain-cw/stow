@@ -24,17 +24,26 @@ function proposalAmount(proposal: Proposal & { amount?: number }): number {
 }
 
 function normalizeProposal(raw: Proposal & { amount?: number }): Proposal {
-  return {
+  const normalized: Proposal = {
     ...raw,
     amount_paise: proposalAmount(raw),
     narration: raw.narration ?? '',
     from_account_name: raw.from_account_name ?? '',
     to_account_name: raw.to_account_name ?? '',
   }
+  if (raw.tags?.length) {
+    normalized.tags = raw.tags.filter((t) => typeof t === 'string' && t.trim()).map((t) => t.trim())
+  }
+  return normalized
 }
 
 function buildConfirmMessage(proposal: Proposal & { amount?: number }): string {
-  return `confirm:${JSON.stringify(normalizeProposal(proposal))}`
+  const normalized = normalizeProposal(proposal)
+  const payload: Record<string, unknown> = { ...normalized }
+  if (!normalized.tags?.length) {
+    delete payload.tags
+  }
+  return `confirm:${JSON.stringify(payload)}`
 }
 
 function parseProposal(content: string): { proposal: Proposal; display: string } | null {

@@ -7,6 +7,7 @@ import { MonoAmount } from '../components/MonoAmount'
 import { TxnBadge, type TxnType } from '../components/TxnBadge'
 import { EmptyState } from '../components/EmptyState'
 import { TransactionEntrySheet } from '../components/TransactionEntrySheet'
+import { txnDisplayFromEntries } from '../components/txnDisplay'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -345,9 +346,7 @@ function RecentZone({
             <>
               <div className="divide-y divide-zinc-50">
                 {transactions.slice(0, 10).map(txn => {
-                  const totalAmt = txn.entries.reduce((s, e) => s + Math.abs(e.amount), 0) / 2
-                  const isCredit = txn.type === 'receipt'
-                  const displayAmt = isCredit ? totalAmt : txn.type === 'contra' ? totalAmt : -totalAmt
+                  const { amount: displayAmt, colored } = txnDisplayFromEntries(txn.type, txn.entries)
                   return (
                     <div
                       key={txn.id}
@@ -367,7 +366,7 @@ function RecentZone({
                         <TxnBadge type={txn.type as TxnType} />
                         <MonoAmount
                           amount={displayAmt}
-                          colored={txn.type !== 'contra'}
+                          colored={colored}
                           className="text-sm w-24 text-right"
                         />
                       </div>

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from sqlmodel import Session, select
 
-from stow.ai_config import read_config, write_config, normalize_base_url
+from stow.ai_config import read_config, write_config, normalize_base_url, model_settings, resolve_llm_base_url
 from stow.ai_agent import get_ai_agent, ParsedTransaction
 from stow.db import get_session
 from stow.models import Account, Transaction
@@ -76,7 +76,8 @@ async def test_connection(body: TestConnectionIn = TestConnectionIn()):
         from pydantic_ai.providers.openai import OpenAIProvider
         from pydantic_ai import Agent
         from stow.ai_config import _DEFAULT_API_KEY, _DEFAULT_BASE_URL, _DEFAULT_MODEL
-        effective_url = normalize_base_url(base_url) if base_url else _DEFAULT_BASE_URL
+        effective_url = resolve_llm_base_url(base_url)
+        logger.info("Testing LLM connection at %s model=%s", effective_url, model)
         ai_model = OpenAIChatModel(
             model or _DEFAULT_MODEL,
             provider=OpenAIProvider(
@@ -86,11 +87,16 @@ async def test_connection(body: TestConnectionIn = TestConnectionIn()):
         )
         agent = Agent(ai_model)
         start = time.monotonic()
-        await agent.run("ping")
+        await agent.run("ping", model_settings=model_settings("ping"))
         latency_ms = (time.monotonic() - start) * 1000
         return ConnectionResult(ok=True, model=model, latency_ms=round(latency_ms, 1))
     except Exception as exc:
-        return ConnectionResult(ok=False, error=str(exc))
+        logger.error("LLM test-connection failed: %s", exc, exc_info=True)
+        effective_url = resolve_llm_base_url(body.base_url or saved["base_url"])
+        return ConnectionResult(
+            ok=False,
+            error=f"{exc} (resolved url={effective_url})",
+        )
 
 
 @router.post("/parse-transaction", response_model=ParsedTransaction)
@@ -117,5 +123,5 @@ async def parse_transaction(
         f"Parse: {body.text}"
     )
 
-    result = await agent.run(user_prompt)
+    result = await agent.run(user_prompt, model_settings=model_settings("parse"))
     return result.output

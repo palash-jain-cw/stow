@@ -7,10 +7,14 @@ from pydantic_ai import Agent, RunContext
 
 from agent.activity import emit
 from agent.deps import StowDeps
+from agent.tool_errors import stow_get, tool_safe
 
 _INSTRUCTIONS = """\
 You are the report agent for Stow, an Indian personal finance system.
 You answer financial queries and generate structured financial reports.
+
+When any tool returns a string starting with "Error:", read the message, fix the issue,
+retry, or ask the user one clarifying question.
 
 ## Query routing
 1. **Balance query** ("what's my HDFC balance", "show all accounts", "/balance") →
@@ -43,7 +47,8 @@ If no date range is given for a spending query, ask ONE clarifying question befo
 """
 
 
-async def _get_current_date(ctx: RunContext[StowDeps]) -> dict:
+@tool_safe("get_current_date")
+async def _get_current_date(ctx: RunContext[StowDeps]) -> dict | str:
     """Return today's date. Call this before resolving any relative date expression."""
     await emit("Checking date")
     now = datetime.now()
@@ -56,22 +61,21 @@ async def _get_current_date(ctx: RunContext[StowDeps]) -> dict:
     }
 
 
-async def _get_financial_years(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("get_financial_years")
+async def _get_financial_years(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all financial years with start_date, end_date, and status."""
     await emit("Fetching financial years")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/financial-years")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/financial-years", tool_name="get_financial_years")
 
 
-async def _list_accounts(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("list_accounts")
+async def _list_accounts(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all accounts with current balances (in paise). Use for balance queries."""
     await emit("Fetching account balances")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/accounts")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/accounts", tool_name="list_accounts")
 
 
+@tool_safe("list_transactions")
 async def _list_transactions(
     ctx: RunContext[StowDeps],
     from_date: Optional[str] = None,
@@ -79,7 +83,7 @@ async def _list_transactions(
     account_id: Optional[int] = None,
     narration_q: Optional[str] = None,
     txn_type: Optional[str] = None,
-) -> list[dict]:
+) -> list[dict] | str:
     """List transactions with optional filters. Use for spending / income queries.
 
     Args:
@@ -101,69 +105,71 @@ async def _list_transactions(
         params["q"] = narration_q
     if txn_type:
         params["type"] = txn_type
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/transactions", params=params)
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/transactions", tool_name="list_transactions", params=params)
 
 
-async def _get_trial_balance(ctx: RunContext[StowDeps], fy_id: int) -> dict:
+@tool_safe("get_trial_balance")
+async def _get_trial_balance(ctx: RunContext[StowDeps], fy_id: int) -> dict | str:
     """Get the trial balance for a financial year.
 
     Args:
         fy_id: Financial year ID
     """
     await emit("Generating trial balance")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/reports/trial-balance",
+    return await stow_get(
+        ctx.deps,
+        "/reports/trial-balance",
+        tool_name="get_trial_balance",
         params={"fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _get_profit_loss(ctx: RunContext[StowDeps], fy_id: int) -> dict:
+@tool_safe("get_profit_loss")
+async def _get_profit_loss(ctx: RunContext[StowDeps], fy_id: int) -> dict | str:
     """Get the profit & loss report for a financial year.
 
     Args:
         fy_id: Financial year ID
     """
     await emit("Generating P&L report")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/reports/profit-loss",
+    return await stow_get(
+        ctx.deps,
+        "/reports/profit-loss",
+        tool_name="get_profit_loss",
         params={"fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _get_balance_sheet(ctx: RunContext[StowDeps], fy_id: int) -> dict:
+@tool_safe("get_balance_sheet")
+async def _get_balance_sheet(ctx: RunContext[StowDeps], fy_id: int) -> dict | str:
     """Get the balance sheet for a financial year.
 
     Args:
         fy_id: Financial year ID
     """
     await emit("Generating balance sheet")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/reports/balance-sheet",
+    return await stow_get(
+        ctx.deps,
+        "/reports/balance-sheet",
+        tool_name="get_balance_sheet",
         params={"fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _get_cash_flow(ctx: RunContext[StowDeps], fy_id: int) -> dict:
+@tool_safe("get_cash_flow")
+async def _get_cash_flow(ctx: RunContext[StowDeps], fy_id: int) -> dict | str:
     """Get the cash flow statement for a financial year.
 
     Args:
         fy_id: Financial year ID
     """
     await emit("Generating cash flow statement")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/reports/cash-flow",
+    return await stow_get(
+        ctx.deps,
+        "/reports/cash-flow",
+        tool_name="get_cash_flow",
         params={"fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
 def build_report_agent(model: Any) -> Agent[StowDeps, str]:

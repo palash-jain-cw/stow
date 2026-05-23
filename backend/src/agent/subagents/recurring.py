@@ -6,10 +6,14 @@ from pydantic_ai import Agent, RunContext
 
 from agent.activity import emit
 from agent.deps import StowDeps
+from agent.tool_errors import stow_get, stow_post, tool_safe
 
 _INSTRUCTIONS = """\
 You are the recurring agent for an Indian personal finance system (Stow).
 You manage the daily recurring transaction digest.
+
+When any tool returns a string starting with "Error:", read the message, fix the issue,
+retry, or ask the user one clarifying question.
 
 ## Workflow
 1. Call get_recurring_due to fetch all items due today.
@@ -31,20 +35,20 @@ You manage the daily recurring transaction digest.
 """
 
 
-async def _get_recurring_due(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("get_recurring_due")
+async def _get_recurring_due(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """Get all recurring transaction queue items due today."""
     await emit("Checking recurring items")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/recurring/due-today")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/recurring/due-today", tool_name="get_recurring_due")
 
 
+@tool_safe("confirm_recurring")
 async def _confirm_recurring(
     ctx: RunContext[StowDeps],
     item_id: int,
     date_override: Optional[str] = None,
     narration_override: Optional[str] = None,
-) -> dict:
+) -> dict | str:
     """Post a recurring queue item as a transaction.
 
     Args:
@@ -58,34 +62,30 @@ async def _confirm_recurring(
         body["date"] = date_override
     if narration_override:
         body["narration"] = narration_override
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/recurring/queue/{item_id}/confirm",
+    return await stow_post(
+        ctx.deps,
+        f"/recurring/queue/{item_id}/confirm",
+        tool_name="confirm_recurring",
         json=body,
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _skip_recurring(ctx: RunContext[StowDeps], item_id: int) -> dict:
+@tool_safe("skip_recurring")
+async def _skip_recurring(ctx: RunContext[StowDeps], item_id: int) -> dict | str:
     """Skip a recurring queue item without posting a transaction.
 
     Args:
         item_id: Recurring queue item ID
     """
     await emit("Skipping recurring item")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/recurring/queue/{item_id}/skip",
-    )
-    r.raise_for_status()
-    return r.json()
+    return await stow_post(ctx.deps, f"/recurring/queue/{item_id}/skip", tool_name="skip_recurring")
 
 
-async def _list_schedules(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("list_schedules")
+async def _list_schedules(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all active recurring schedules."""
     await emit("Fetching schedules")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/recurring/schedules")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/recurring/schedules", tool_name="list_schedules")
 
 
 def build_recurring_agent(model: Any) -> Agent[StowDeps, str]:

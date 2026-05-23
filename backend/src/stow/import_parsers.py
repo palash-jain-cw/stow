@@ -41,5 +41,7 @@ def extract_pdf_text(file_bytes: bytes) -> str:
 
 
 async def parse_statement(agent: Agent, pdf_text: str) -> ParsedStatement:
-    result = await agent.run(pdf_text)
+    from stow.ai_config import model_settings
+
+    result = await agent.run(pdf_text, model_settings=model_settings("import"))
     return result.data

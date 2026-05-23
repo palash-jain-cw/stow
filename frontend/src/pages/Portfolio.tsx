@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
+import { refreshAllLivePrices } from '../api/prices'
 import { MonoAmount } from '../components/MonoAmount'
 import { InvestmentTradeSheet } from '../components/InvestmentTradeSheet'
 import { FdSheet } from '../components/FdSheet'
@@ -12,6 +13,7 @@ import type { AccountOption } from '../components/investmentHelpers'
 
 interface AccountOut extends AccountOption {
   balance: number
+  price_source_id: string | null
 }
 
 interface PortfolioItemOut {
@@ -109,6 +111,42 @@ function LoadingRows({ cols }: { cols: number }) {
 
 function NoData({ message }: { message: string }) {
   return <p className="text-center text-zinc-400 py-12 text-sm">{message}</p>
+}
+
+function LivePriceHint({ items }: { items: AccountWithPortfolio[] }) {
+  const needsSourceId = items.filter(({ account, lots }) => {
+    const active = lots.filter(l => l.remaining_units > 0)
+    return active.length > 0 && !account.price_source_id
+  })
+  const needsFetch = items.filter(({ account, lots }) => {
+    const active = lots.filter(l => l.remaining_units > 0)
+    return (
+      active.length > 0 &&
+      !!account.price_source_id &&
+      active.some(l => l.current_value === null)
+    )
+  })
+
+  if (needsSourceId.length === 0 && needsFetch.length === 0) return null
+
+  return (
+    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      {needsSourceId.length > 0 && (
+        <p>
+          Add a price source ID on{' '}
+          {needsSourceId.map(({ account }) => account.name).join(', ')}{' '}
+          in Accounts (AMFI scheme code for MFs, NSE ticker for stocks) to see current value.
+        </p>
+      )}
+      {needsFetch.length > 0 && (
+        <p className={needsSourceId.length > 0 ? 'mt-2' : undefined}>
+          Live price unavailable for{' '}
+          {needsFetch.map(({ account }) => account.name).join(', ')}.
+          Check the price source ID or try refreshing this page.
+        </p>
+      )}
+    </div>
+  )
 }
 
 // ── Allocation bar ────────────────────────────────────────────────────────────
@@ -537,27 +575,38 @@ export default function Portfolio() {
   const stockBalance = stockAccounts.reduce((s, a) => s + a.balance, 0)
   const fdBalance = fdAccounts.reduce((s, a) => s + a.balance, 0)
 
-  // Portfolio per account — fetch only when tab is active
+  // Portfolio per account — refresh live prices, then load holdings
+  const priceableAccountKey = (accs: AccountOut[]) =>
+    accs.map(a => `${a.id}:${a.price_source_id ?? ''}`).join(',')
+
   const { data: mfPortfolios, isLoading: mfLoading } = useQuery<AccountWithPortfolio[]>({
-    queryKey: ['portfolio', 'mf', mfAccounts.map(a => a.id)],
+    queryKey: ['portfolio', 'mf', mfAccounts.map(a => a.id), priceableAccountKey(mfAccounts)],
     queryFn: async () => {
+      if (mfAccounts.some(a => a.price_source_id)) {
+        await refreshAllLivePrices()
+      }
       const results = await Promise.all(
         mfAccounts.map(a => api.get<PortfolioItemOut[]>(`/investments/${a.id}/portfolio`))
       )
       return mfAccounts.map((a, i) => ({ account: a, lots: results[i] }))
     },
     enabled: tab === 'mf' && mfAccounts.length > 0,
+    staleTime: 5 * 60 * 1000,
   })
 
   const { data: stockPortfolios, isLoading: stockLoading } = useQuery<AccountWithPortfolio[]>({
-    queryKey: ['portfolio', 'stocks', stockAccounts.map(a => a.id)],
+    queryKey: ['portfolio', 'stocks', stockAccounts.map(a => a.id), priceableAccountKey(stockAccounts)],
     queryFn: async () => {
+      if (stockAccounts.some(a => a.price_source_id)) {
+        await refreshAllLivePrices()
+      }
       const results = await Promise.all(
         stockAccounts.map(a => api.get<PortfolioItemOut[]>(`/investments/${a.id}/portfolio`))
       )
       return stockAccounts.map((a, i) => ({ account: a, lots: results[i] }))
     },
     enabled: tab === 'stocks' && stockAccounts.length > 0,
+    staleTime: 5 * 60 * 1000,
   })
 
   const { data: fds = [], isLoading: fdsLoading } = useQuery<FdListItemOut[]>({
@@ -609,6 +658,7 @@ export default function Portfolio() {
               Record purchase
             </button>
           </div>
+          {mfPortfolios && <LivePriceHint items={mfPortfolios} />}
           <HoldingsTable
             items={mfPortfolios ?? (mfLoading ? [] : mfAccounts.map(a => ({ account: a, lots: [] })))}
             isLoading={mfLoading}
@@ -631,6 +681,7 @@ export default function Portfolio() {
               Record purchase
             </button>
           </div>
+          {stockPortfolios && <LivePriceHint items={stockPortfolios} />}
           <HoldingsTable
             items={stockPortfolios ?? (stockLoading ? [] : stockAccounts.map(a => ({ account: a, lots: [] })))}
             isLoading={stockLoading}

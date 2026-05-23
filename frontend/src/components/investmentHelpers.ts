@@ -30,6 +30,7 @@ export interface AccountOption {
   group_name: string
   nature: string
   investment_subtype: string | null
+  price_source_id?: string | null
   is_archived: boolean
 }
 

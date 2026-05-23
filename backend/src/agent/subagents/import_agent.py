@@ -7,10 +7,14 @@ from pydantic_ai import Agent, RunContext
 from agent.activity import emit
 from agent.deps import StowDeps
 from agent.subagents.transaction import _get_active_fy, _list_accounts
+from agent.tool_errors import stow_get, stow_post, stow_put, tool_safe
 
 _INSTRUCTIONS = """\
 You are the import agent for an Indian personal finance system.
 The bank statement PDF has already been parsed. You receive a batch_id from the orchestrator.
+
+When any tool returns a string starting with "Error:", read the message, fix the issue,
+retry, or ask the user one clarifying question.
 
 Workflow:
 1. Call review_staging(batch_id) to see all parsed rows.
@@ -33,11 +37,12 @@ Rules:
 """
 
 
+@tool_safe("import_statement")
 async def _import_statement(
     ctx: RunContext[StowDeps],
     pdf_bytes_b64: str,
     filename: str,
-) -> dict:
+) -> dict | str:
     """Upload a bank statement PDF and parse it into a staging batch.
 
     Args:
@@ -45,20 +50,22 @@ async def _import_statement(
         filename: Original filename (must end in .pdf)
     """
     import base64
+
     pdf_bytes = base64.b64decode(pdf_bytes_b64)
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/imports",
+    return await stow_post(
+        ctx.deps,
+        "/imports",
+        tool_name="import_statement",
         files={"file": (filename, pdf_bytes, "application/pdf")},
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("review_staging")
 async def _review_staging(
     ctx: RunContext[StowDeps],
     batch_id: int,
     status: Optional[str] = None,
-) -> list[dict]:
+) -> list[dict] | str:
     """List staging rows for a batch, optionally filtered by status.
 
     Args:
@@ -69,20 +76,21 @@ async def _review_staging(
     params: dict[str, Any] = {}
     if status:
         params["status"] = status
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/imports/{batch_id}/rows",
+    return await stow_get(
+        ctx.deps,
+        f"/imports/{batch_id}/rows",
+        tool_name="review_staging",
         params=params,
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("confirm_staging")
 async def _confirm_staging(
     ctx: RunContext[StowDeps],
     batch_id: int,
     bank_account_id: int,
     fy_id: int,
-) -> dict:
+) -> dict | str:
     """Post all confirmed staging rows as transactions.
 
     Args:
@@ -91,20 +99,21 @@ async def _confirm_staging(
         fy_id: Financial year ID to post transactions into
     """
     await emit("Posting transactions")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/imports/{batch_id}/confirm",
+    return await stow_post(
+        ctx.deps,
+        f"/imports/{batch_id}/confirm",
+        tool_name="confirm_staging",
         json={"bank_account_id": bank_account_id, "fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("match_staging_row")
 async def _match_staging_row(
     ctx: RunContext[StowDeps],
     batch_id: int,
     row_id: int,
     transaction_id: int,
-) -> dict:
+) -> dict | str:
     """Mark a staging row as reconciled against an existing transaction.
 
     Args:
@@ -113,14 +122,15 @@ async def _match_staging_row(
         transaction_id: Existing transaction ID to match against
     """
     await emit("Reconciling transaction")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/imports/{batch_id}/rows/{row_id}/match",
+    return await stow_post(
+        ctx.deps,
+        f"/imports/{batch_id}/rows/{row_id}/match",
+        tool_name="match_staging_row",
         json={"transaction_id": transaction_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("update_staging_row")
 async def _update_staging_row(
     ctx: RunContext[StowDeps],
     batch_id: int,
@@ -129,7 +139,7 @@ async def _update_staging_row(
     suggested_account_id: Optional[int] = None,
     narration_override: Optional[str] = None,
     tags: Optional[list[str]] = None,
-) -> dict:
+) -> dict | str:
     """Update a staging row's status, account, or narration.
 
     Args:
@@ -150,24 +160,23 @@ async def _update_staging_row(
         body["narration_override"] = narration_override
     if tags is not None:
         body["tags"] = tags
-    r = await ctx.deps.http_client.put(
-        f"{ctx.deps.base_url}/imports/{batch_id}/rows/{row_id}",
+    return await stow_put(
+        ctx.deps,
+        f"/imports/{batch_id}/rows/{row_id}",
+        tool_name="update_staging_row",
         json=body,
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _get_batch(ctx: RunContext[StowDeps], batch_id: int) -> dict:
+@tool_safe("get_batch")
+async def _get_batch(ctx: RunContext[StowDeps], batch_id: int) -> dict | str:
     """Get import batch details including row counts by status.
 
     Args:
         batch_id: Import batch ID
     """
     await emit("Fetching import batch")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/imports/{batch_id}")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, f"/imports/{batch_id}", tool_name="get_batch")
 
 
 def build_import_agent(model: Any) -> Agent[StowDeps, str]:

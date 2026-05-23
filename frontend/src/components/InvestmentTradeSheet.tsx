@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle } from 'lucide-react'
 import { Sheet } from './Sheet'
 import { api, queryKeys } from '../api/api'
+import { refreshLivePrice } from '../api/prices'
 import {
   bankAccountsForSelect,
   formatRupees,
@@ -108,7 +109,6 @@ export function InvestmentTradeSheet({
     bankAccountId !== '' &&
     unitsMilli > 0 &&
     pricePaise > 0 &&
-    narration.trim() !== '' &&
     (mode === 'buy' || maxUnitsMilli == null || unitsMilli <= maxUnitsMilli)
 
   const saveMutation = useMutation({
@@ -133,7 +133,12 @@ export function InvestmentTradeSheet({
       }
 
       if (mode === 'buy') {
-        return api.post(`/investments/${investmentAccountId}/buy`, body)
+        const result = await api.post(`/investments/${investmentAccountId}/buy`, body)
+        const invAccount = accounts.find(a => a.id === investmentAccountId)
+        if (invAccount?.price_source_id) {
+          await refreshLivePrice(Number(investmentAccountId))
+        }
+        return result
       }
       return api.post<CapitalGainEntryOut[]>(`/investments/${investmentAccountId}/sell`, body)
     },
@@ -256,13 +261,14 @@ export function InvestmentTradeSheet({
         )}
 
         <div>
-          <FieldLabel label="Narration" htmlFor="trade-narration" />
+          <FieldLabel label="Narration (optional)" htmlFor="trade-narration" />
           <textarea
             id="trade-narration"
-            aria-label="Narration"
+            aria-label="Narration (optional)"
             rows={2}
             value={narration}
             onChange={e => setNarration(e.target.value)}
+            placeholder="e.g. SIP purchase"
             className={`${inputCls} resize-none`}
           />
         </div>

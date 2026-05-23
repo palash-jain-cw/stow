@@ -10,7 +10,7 @@ class BuyIn(BaseModel):
     units: int            # milliunits
     cost_per_unit: int    # paise per milliunit
     bank_account_id: int
-    narration: str
+    narration: str = ""
 
 
 class SellIn(BaseModel):
@@ -19,7 +19,7 @@ class SellIn(BaseModel):
     units: int              # milliunits to sell
     price_per_unit: int     # paise per milliunit
     bank_account_id: int
-    narration: str
+    narration: str = ""
 
 
 class LotOut(BaseModel):
@@ -97,7 +97,7 @@ class FdCreateIn(BaseModel):
     from_account_id: int   # bank / trading account to debit
     fy_id: int
     date: date             # transaction date (usually = start_date)
-    narration: str
+    narration: str = ""
 
 
 class FdOut(BaseModel):
@@ -116,7 +116,7 @@ class FdMatureIn(BaseModel):
     to_account_id: int     # bank / trading account to receive proceeds
     fy_id: int
     date: date
-    narration: str
+    narration: str = ""
 
 
 class FdMatureOut(BaseModel):

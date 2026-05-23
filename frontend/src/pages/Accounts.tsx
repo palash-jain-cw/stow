@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, Search, ChevronDown, Layers, ExternalLink, Pencil, Archive, ArchiveRestore } from 'lucide-react'
@@ -56,7 +56,7 @@ interface LedgerRow {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const DEFAULT_GROUPS = ['Bank Accounts', 'Cash-in-Hand']
+const DEFAULT_GROUPS = ['Bank Accounts', 'Cash-in-Hand', 'Investments']
 const SEE_MORE_KEY = 'stow.accounts.seeMore'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -116,7 +116,32 @@ export default function Accounts() {
   const [search, setSearch] = useState('')
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({})
   const [sheetAccount, setSheetAccount] = useState<AccountOut | undefined | null>(null)  // null=closed, undefined=new, AccountOut=edit
+  const [sheetInitialGroupId, setSheetInitialGroupId] = useState<number | undefined>()
   const [archiveConfirm, setArchiveConfirm] = useState(false)
+
+  // Deep link: /accounts?new=investment opens the sheet with Investments pre-selected
+  useEffect(() => {
+    if (searchParams.get('new') !== 'investment') return
+    const investmentsGroup = groups.find(g => g.name === 'Investments')
+    if (!investmentsGroup) return
+    setSheetInitialGroupId(investmentsGroup.id)
+    setSheetAccount(undefined)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('new')
+      return next
+    }, { replace: true })
+  }, [searchParams, groups, setSearchParams])
+
+  function openNewAccountSheet(initialGroupId?: number) {
+    setSheetInitialGroupId(initialGroupId)
+    setSheetAccount(undefined)
+  }
+
+  function closeAccountSheet() {
+    setSheetAccount(null)
+    setSheetInitialGroupId(undefined)
+  }
 
   // "See more" state persisted in localStorage
   const [seeMore, setSeeMore] = useState<boolean>(() => {
@@ -205,7 +230,7 @@ export default function Accounts() {
       <header className="h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
         <h1 className="text-base font-semibold text-zinc-900">Accounts</h1>
         <button
-          onClick={() => setSheetAccount(undefined)}
+          onClick={() => openNewAccountSheet()}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-md transition-colors"
         >
           <Plus className="w-4 h-4" />
@@ -303,7 +328,7 @@ export default function Accounts() {
                 subtext="Or start fresh with a new one."
               />
               <button
-                onClick={() => setSheetAccount(undefined)}
+                onClick={() => openNewAccountSheet()}
                 className="mt-4 flex items-center gap-2 border border-zinc-200 hover:border-zinc-300 text-zinc-600 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -335,7 +360,10 @@ export default function Accounts() {
                     Transactions
                   </Link>
                   <button
-                    onClick={() => setSheetAccount(selectedAccount)}
+                    onClick={() => {
+                      setSheetInitialGroupId(undefined)
+                      setSheetAccount(selectedAccount)
+                    }}
                     className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
                   >
                     <Pencil className="w-4 h-4" />
@@ -449,13 +477,12 @@ export default function Accounts() {
       {/* New / Edit sheet */}
       <AccountSheet
         open={sheetAccount !== null}
-        onClose={() => setSheetAccount(null)}
+        onClose={closeAccountSheet}
         account={sheetAccount === undefined ? undefined : sheetAccount ?? undefined}
         groups={groups}
         activeFyId={activeFy?.id}
-        onSaved={() => {
-          setSheetAccount(null)
-        }}
+        initialGroupId={sheetInitialGroupId}
+        onSaved={closeAccountSheet}
       />
     </div>
   )

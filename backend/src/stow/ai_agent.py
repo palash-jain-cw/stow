@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from stow.ai_config import build_model
@@ -17,6 +17,7 @@ class ParsedTransaction(BaseModel):
     from_account_id: int
     to_account_id: int
     confidence: float
+    tags: list[str] = Field(default_factory=list)
 
 
 _SYSTEM_PROMPT = """\
@@ -24,6 +25,8 @@ You are an accounting assistant for an Indian personal finance system.
 Parse the user's natural language description into a structured transaction.
 Return amounts in paise (integer). Resolve account names to IDs from the provided list.
 Resolve relative dates (e.g. "last Tuesday") against the current date provided in the prompt.
+When the user mentions tags or labels (e.g. "tag it salary and acme"), include them in tags.
+Use lowercase single-word or short hyphenated tags when possible. Omit tags when none are mentioned.
 Respond only with valid JSON matching the required schema.
 """
 

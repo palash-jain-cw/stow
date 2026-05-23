@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, HelpCircle } from 'lucide-react'
 import { Sheet } from './Sheet'
 import { api, queryKeys } from '../api/api'
+import { refreshLivePrice } from '../api/prices'
 
 interface AccountGroup {
   id: number
@@ -34,6 +35,8 @@ interface AccountSheetProps {
   groups: AccountGroup[]
   activeFyId: number | undefined
   onSaved: () => void
+  /** Pre-select a group when opening the new-account sheet (e.g. Investments). */
+  initialGroupId?: number
 }
 
 const DEP_PRESETS = [
@@ -54,12 +57,35 @@ const INV_SUBTYPES: { value: string; label: string }[] = [
 
 const CF_TAGS = ['operating', 'investing', 'financing']
 
+/** Shown as one-click picks above the full group dropdown. */
+const QUICK_GROUP_NAMES = ['Bank Accounts', 'Cash-in-Hand', 'Investments', 'Indirect Expenses']
+
+/** Pinned to the top of each nature optgroup in the full dropdown. */
+const PINNED_GROUP_NAMES = ['Bank Accounts', 'Cash-in-Hand', 'Investments', 'Fixed Assets']
+
 function isFixedGroup(name: string) {
   return name.toLowerCase().includes('fixed')
 }
 
 function isInvestmentGroup(name: string) {
   return name.toLowerCase().includes('invest')
+}
+
+function groupOptionLabel(group: AccountGroup, allGroups: AccountGroup[]) {
+  if (!group.parent_id) return group.name
+  const parent = allGroups.find(g => g.id === group.parent_id)
+  return parent ? `${parent.name} › ${group.name}` : group.name
+}
+
+function sortGroupsForSelect(a: AccountGroup, b: AccountGroup) {
+  const aPinned = PINNED_GROUP_NAMES.indexOf(a.name)
+  const bPinned = PINNED_GROUP_NAMES.indexOf(b.name)
+  if (aPinned !== -1 || bPinned !== -1) {
+    if (aPinned === -1) return 1
+    if (bPinned === -1) return -1
+    return aPinned - bPinned
+  }
+  return a.sort_order - b.sort_order
 }
 
 function Tip({ text }: { text: string }) {
@@ -73,16 +99,29 @@ function Tip({ text }: { text: string }) {
   )
 }
 
-function FieldLabel({ label, tip }: { label: string; tip?: string }) {
+function FieldLabel({ label, tip, htmlFor }: { label: string; tip?: string; htmlFor?: string }) {
   return (
     <div className="flex items-center gap-1.5 mb-2">
-      <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</label>
+      <label
+        htmlFor={htmlFor}
+        className="text-xs font-semibold text-zinc-500 uppercase tracking-wide"
+      >
+        {label}
+      </label>
       {tip && <Tip text={tip} />}
     </div>
   )
 }
 
-export function AccountSheet({ open, onClose, account, groups, activeFyId, onSaved }: AccountSheetProps) {
+export function AccountSheet({
+  open,
+  onClose,
+  account,
+  groups,
+  activeFyId,
+  onSaved,
+  initialGroupId,
+}: AccountSheetProps) {
   const qc = useQueryClient()
   const isEdit = !!account
 
@@ -91,6 +130,7 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
   const [cfTag, setCfTag] = useState('')
   const [depRate, setDepRate] = useState('')
   const [invSubtype, setInvSubtype] = useState('')
+  const [priceSourceId, setPriceSourceId] = useState('')
   const [obRupees, setObRupees] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -103,23 +143,37 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
       setCfTag('')
       setDepRate(account.depreciation_rate != null ? String(account.depreciation_rate) : '')
       setInvSubtype(account.investment_subtype ?? '')
+      setPriceSourceId(account.price_source_id ?? '')
       setObRupees('')
-      setMoreOpen(false)
+      setMoreOpen(
+        account.investment_subtype === 'equity_mf' || account.investment_subtype === 'stock',
+      )
     } else {
       setName('')
-      setGroupId('')
-      setCfTag('')
+      const presetGroup = initialGroupId != null ? groups.find(g => g.id === initialGroupId) : undefined
+      setGroupId(initialGroupId ?? '')
+      setCfTag(presetGroup?.cash_flow_tag ?? '')
       setDepRate('')
       setInvSubtype('')
+      setPriceSourceId('')
       setObRupees('')
-      setMoreOpen(false)
+      setMoreOpen(
+        presetGroup != null &&
+          (isFixedGroup(presetGroup.name) || isInvestmentGroup(presetGroup.name)),
+      )
     }
     setError(null)
-  }, [open, account])
+  }, [open, account, initialGroupId, groups])
 
   const selectedGroup = groups.find(g => g.id === groupId)
   const showDep = selectedGroup ? isFixedGroup(selectedGroup.name) : false
   const showInv = selectedGroup ? isInvestmentGroup(selectedGroup.name) : false
+  const showPriceSource = showInv && (invSubtype === 'equity_mf' || invSubtype === 'stock')
+  const priceSourceTip =
+    invSubtype === 'stock'
+      ? 'NSE ticker without suffix (e.g. RELIANCE, INFY). Used to fetch live stock prices.'
+      : 'AMFI scheme code for live NAV (e.g. 122639). Find codes at mfapi.in.'
+  const priceSourcePlaceholder = invSubtype === 'stock' ? 'RELIANCE' : '122639'
 
   function handleGroupChange(id: number | '') {
     setGroupId(id)
@@ -140,7 +194,8 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
         group_id: groupId,
         ...(depRate !== '' ? { depreciation_rate: parseFloat(depRate) } : { depreciation_rate: null }),
         investment_subtype: invSubtype || null,
-        price_source_id: null,
+        price_source_id:
+          showPriceSource && priceSourceId.trim() !== '' ? priceSourceId.trim() : null,
         currency: account?.currency ?? 'INR',
         is_archived: account?.is_archived ?? false,
       }
@@ -160,16 +215,25 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
           await api.put(`/accounts/${savedId}/opening-balance`, { fy_id: activeFyId, amount: paise })
         }
       }
+
+      if (showPriceSource && priceSourceId.trim() !== '') {
+        await refreshLivePrice(savedId)
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+      qc.invalidateQueries({ queryKey: ['portfolio'] })
       onSaved()
       onClose()
     },
     onError: (e: Error) => setError(e.message),
   })
 
-  // Group options — sort by sort_order, optgroup by nature
+  const quickGroups = QUICK_GROUP_NAMES
+    .map(name => groups.find(g => g.name === name))
+    .filter((g): g is AccountGroup => g != null)
+
+  // Group options — pinned names first, optgroup by nature
   const natures = ['asset', 'liability', 'equity', 'income', 'expense']
   const NATURE_LABEL: Record<string, string> = {
     asset: 'Assets', liability: 'Liabilities', equity: 'Equity',
@@ -199,8 +263,26 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
         <div>
           <FieldLabel
             label="Group"
-            tip="Groups organise accounts into categories like Bank Accounts, Expenses, Income etc. This determines how the account appears in reports."
+            tip="For mutual funds, stocks, and FDs choose Investments. Bank accounts go under Bank Accounts. This determines how the account appears in reports."
           />
+          {quickGroups.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {quickGroups.map(g => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => handleGroupChange(g.id)}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                    groupId === g.id
+                      ? 'bg-zinc-900 text-white border-zinc-900'
+                      : 'text-zinc-600 border-zinc-200 hover:border-zinc-300'
+                  }`}
+                >
+                  {g.name}
+                </button>
+              ))}
+            </div>
+          )}
           <select
             value={groupId}
             onChange={e => handleGroupChange(e.target.value === '' ? '' : Number(e.target.value))}
@@ -208,18 +290,96 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
           >
             <option value="">Select a group</option>
             {natures.map(nature => {
-              const natGroups = groups.filter(g => g.nature === nature).sort((a, b) => a.sort_order - b.sort_order)
+              const natGroups = groups
+                .filter(g => g.nature === nature)
+                .sort(sortGroupsForSelect)
               if (!natGroups.length) return null
               return (
                 <optgroup key={nature} label={NATURE_LABEL[nature]}>
                   {natGroups.map(g => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
+                    <option key={g.id} value={g.id}>{groupOptionLabel(g, groups)}</option>
                   ))}
                 </optgroup>
               )
             })}
           </select>
         </div>
+
+        {/* Investment subtype — shown immediately when Investments group is selected */}
+        {showInv && (
+          <div className="space-y-5">
+            <div>
+              <FieldLabel
+                label="Investment type"
+                tip="Equity MFs and Stocks track purchase lots for capital gains. FDs track interest income. PPF tracks contributions."
+              />
+              <div className="flex gap-2 flex-wrap">
+                {INV_SUBTYPES.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setInvSubtype(value)}
+                    className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
+                      invSubtype === value
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'text-zinc-600 border-zinc-200 hover:border-zinc-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {showPriceSource && (
+              <div>
+                <FieldLabel label="Price source ID" tip={priceSourceTip} htmlFor="account-price-source-id" />
+                <input
+                  id="account-price-source-id"
+                  type="text"
+                  value={priceSourceId}
+                  onChange={e => setPriceSourceId(e.target.value)}
+                  placeholder={priceSourcePlaceholder}
+                  className="w-full px-3.5 py-2.5 text-sm font-mono border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Depreciation — shown immediately for fixed-asset groups */}
+        {showDep && (
+          <div>
+            <FieldLabel
+              label="Depreciation rate"
+              tip="The WDV rate per Income Tax Act. Common: Computers 40%, Furniture 10%, Vehicles 15%."
+            />
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  value={depRate}
+                  onChange={e => setDepRate(e.target.value)}
+                  placeholder="40"
+                  className="w-full px-3.5 pr-8 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">%</span>
+              </div>
+              <select
+                value=""
+                onChange={e => { if (e.target.value) setDepRate(e.target.value) }}
+                className="px-3 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                {DEP_PRESETS.map(p => (
+                  <option key={p.label} value={p.rate}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* More details toggle */}
         <button
@@ -252,66 +412,6 @@ export function AccountSheet({ open, onClose, account, groups, activeFyId, onSav
                 ))}
               </select>
             </div>
-
-            {/* Depreciation rate (fixed assets) */}
-            {showDep && (
-              <div>
-                <FieldLabel
-                  label="Depreciation rate"
-                  tip="The WDV rate per Income Tax Act. Common: Computers 40%, Furniture 10%, Vehicles 15%."
-                />
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.5"
-                      value={depRate}
-                      onChange={e => setDepRate(e.target.value)}
-                      placeholder="40"
-                      className="w-full px-3.5 pr-8 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-                    />
-                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">%</span>
-                  </div>
-                  <select
-                    value=""
-                    onChange={e => { if (e.target.value) setDepRate(e.target.value) }}
-                    className="px-3 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                  >
-                    {DEP_PRESETS.map(p => (
-                      <option key={p.label} value={p.rate}>{p.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {/* Investment subtype */}
-            {showInv && (
-              <div>
-                <FieldLabel
-                  label="Investment type"
-                  tip="Equity MFs and Stocks track purchase lots for capital gains. FDs track interest income. PPF tracks contributions."
-                />
-                <div className="flex gap-2 flex-wrap">
-                  {INV_SUBTYPES.map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setInvSubtype(value)}
-                      className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-all ${
-                        invSubtype === value
-                          ? 'bg-zinc-900 text-white border-zinc-900'
-                          : 'text-zinc-600 border-zinc-200 hover:border-zinc-300'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Opening balance */}
             <div>

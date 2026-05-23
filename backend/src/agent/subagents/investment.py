@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from pydantic_ai import Agent, RunContext
 
 from agent.activity import emit
 from agent.deps import StowDeps
 from agent.subagents.transaction import _get_active_fy, _list_accounts
+from agent.tool_errors import is_tool_error, stow_get, stow_post, tool_safe
 
 _INSTRUCTIONS = """\
 You are the investment agent for an Indian personal finance system.
 You manage fixed deposits, mutual fund and stock lots, and portfolio queries.
+
+When any tool returns a string starting with "Error:", read the message, fix the issue,
+retry, or ask the user one clarifying question.
 
 Key facts:
 - All amounts in paise (1 INR = 100 paise)
@@ -62,6 +66,7 @@ Use get_holdings, get_portfolio, get_capital_gains for portfolio reporting.
 """
 
 
+@tool_safe("create_fd")
 async def _create_fd(
     ctx: RunContext[StowDeps],
     name: str,
@@ -73,25 +78,14 @@ async def _create_fd(
     from_account_id: int,
     fy_id: int,
     date: str,
-    narration: str,
-) -> dict:
-    """Open a fixed deposit and record the cash movement in the ledger.
-
-    Args:
-        name: FD name/label (e.g. "HDFC FD May 2027")
-        principal: Principal amount in paise
-        interest_rate: Annual interest rate in basis points (e.g. 750 = 7.50%)
-        start_date: ISO date string when FD opens
-        maturity_date: ISO date string when FD matures
-        compounding: simple | monthly | quarterly | yearly
-        from_account_id: Bank/trading account to debit (funds the FD)
-        fy_id: Financial year ID
-        date: Transaction date (ISO string, usually same as start_date)
-        narration: Transaction description
-    """
+    narration: Optional[str] = "",
+) -> dict | str:
+    """Open a fixed deposit and record the cash movement in the ledger."""
     await emit("Creating fixed deposit")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/investments/fds",
+    return await stow_post(
+        ctx.deps,
+        "/investments/fds",
+        tool_name="create_fd",
         json={
             "name": name,
             "principal": principal,
@@ -102,52 +96,43 @@ async def _create_fd(
             "from_account_id": from_account_id,
             "fy_id": fy_id,
             "date": date,
-            "narration": narration,
+            "narration": narration or "",
         },
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("mature_fd")
 async def _mature_fd(
     ctx: RunContext[StowDeps],
     fd_account_id: int,
     to_account_id: int,
     fy_id: int,
     date: str,
-    narration: str,
-) -> dict:
-    """Process FD maturity: receive principal + interest, recognise interest income.
-
-    Args:
-        fd_account_id: The FD account ID (from list_fds)
-        to_account_id: Bank/trading account that receives the maturity proceeds
-        fy_id: Financial year ID
-        date: Maturity date (ISO string)
-        narration: Transaction description
-    """
+    narration: Optional[str] = "",
+) -> dict | str:
+    """Process FD maturity: receive principal + interest, recognise interest income."""
     await emit("Processing FD maturity")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/investments/fds/{fd_account_id}/mature",
+    return await stow_post(
+        ctx.deps,
+        f"/investments/fds/{fd_account_id}/mature",
+        tool_name="mature_fd",
         json={
             "to_account_id": to_account_id,
             "fy_id": fy_id,
             "date": date,
-            "narration": narration,
+            "narration": narration or "",
         },
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _list_fds(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("list_fds")
+async def _list_fds(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all active fixed deposits with accrued interest."""
     await emit("Fetching fixed deposits")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/investments/fds")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(ctx.deps, "/investments/fds", tool_name="list_fds")
 
 
+@tool_safe("buy_investment")
 async def _buy_investment(
     ctx: RunContext[StowDeps],
     account_id: int,
@@ -156,37 +141,26 @@ async def _buy_investment(
     units: int,
     cost_per_unit: int,
     bank_account_id: int,
-    narration: str,
-) -> dict:
-    """Record a purchase of MF units or stock.
-    The INVESTMENT account is debited (its balance increases).
-    The PAYING account (bank/trading) is credited (its balance decreases).
-
-    Args:
-        account_id: The INVESTMENT account being purchased (equity_mf or stock) — money flows INTO this account
-        fy_id: Financial year ID
-        date: Purchase date (ISO string)
-        units: Units purchased in milliunits (1 unit = 1000 milliunits)
-        cost_per_unit: Cost per milliunit in paise (NAV × 1000 ÷ 100)
-        bank_account_id: The SOURCE account paying for the purchase (bank or trading account) — money flows OUT of this
-        narration: Transaction description
-    """
+    narration: Optional[str] = "",
+) -> dict | str:
+    """Record a purchase of MF units or stock."""
     await emit("Recording purchase")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/investments/{account_id}/buy",
+    return await stow_post(
+        ctx.deps,
+        f"/investments/{account_id}/buy",
+        tool_name="buy_investment",
         json={
             "fy_id": fy_id,
             "date": date,
             "units": units,
             "cost_per_unit": cost_per_unit,
             "bank_account_id": bank_account_id,
-            "narration": narration,
+            "narration": narration or "",
         },
     )
-    r.raise_for_status()
-    return r.json()
 
 
+@tool_safe("sell_investment")
 async def _sell_investment(
     ctx: RunContext[StowDeps],
     account_id: int,
@@ -195,85 +169,70 @@ async def _sell_investment(
     units: int,
     price_per_unit: int,
     bank_account_id: int,
-    narration: str,
-) -> list[dict]:
-    """Record a sale of MF units or stock (FIFO), credit the receiving account, book capital gains.
-
-    Args:
-        account_id: Investment account ID
-        fy_id: Financial year ID
-        date: Sale date (ISO string)
-        units: Units to sell in milliunits
-        price_per_unit: Sale price per milliunit in paise
-        bank_account_id: Account to credit with proceeds — bank or trading account
-        narration: Transaction description
-    """
+    narration: Optional[str] = "",
+) -> list[dict] | str:
+    """Record a sale of MF units or stock (FIFO), credit the receiving account, book capital gains."""
     await emit("Recording sale")
-    r = await ctx.deps.http_client.post(
-        f"{ctx.deps.base_url}/investments/{account_id}/sell",
+    return await stow_post(
+        ctx.deps,
+        f"/investments/{account_id}/sell",
+        tool_name="sell_investment",
         json={
             "fy_id": fy_id,
             "date": date,
             "units": units,
             "price_per_unit": price_per_unit,
             "bank_account_id": bank_account_id,
-            "narration": narration,
+            "narration": narration or "",
         },
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _get_holdings(ctx: RunContext[StowDeps], account_id: int) -> list[dict]:
-    """Get current lot holdings for an investment account.
-
-    Args:
-        account_id: Investment account ID
-    """
+@tool_safe("get_holdings")
+async def _get_holdings(ctx: RunContext[StowDeps], account_id: int) -> list[dict] | str:
+    """Get current lot holdings for an investment account."""
     await emit("Fetching holdings")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/investments/{account_id}/holdings")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(
+        ctx.deps,
+        f"/investments/{account_id}/holdings",
+        tool_name="get_holdings",
+    )
 
 
-async def _get_portfolio(ctx: RunContext[StowDeps], account_id: int) -> list[dict]:
-    """Get portfolio with current value and unrealized gains (requires a price quote on file).
-
-    Args:
-        account_id: Investment account ID
-    """
+@tool_safe("get_portfolio")
+async def _get_portfolio(ctx: RunContext[StowDeps], account_id: int) -> list[dict] | str:
+    """Get portfolio with current value and unrealized gains (requires a price quote on file)."""
     await emit("Fetching portfolio")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/investments/{account_id}/portfolio")
-    r.raise_for_status()
-    return r.json()
+    return await stow_get(
+        ctx.deps,
+        f"/investments/{account_id}/portfolio",
+        tool_name="get_portfolio",
+    )
 
 
+@tool_safe("get_capital_gains")
 async def _get_capital_gains(
     ctx: RunContext[StowDeps],
     account_id: int,
     fy_id: int,
-) -> dict:
-    """Get STCG/LTCG capital gains summary for an account in a financial year.
-
-    Args:
-        account_id: Investment account ID
-        fy_id: Financial year ID
-    """
+) -> dict | str:
+    """Get STCG/LTCG capital gains summary for an account in a financial year."""
     await emit("Calculating capital gains")
-    r = await ctx.deps.http_client.get(
-        f"{ctx.deps.base_url}/investments/{account_id}/capital-gains",
+    return await stow_get(
+        ctx.deps,
+        f"/investments/{account_id}/capital-gains",
+        tool_name="get_capital_gains",
         params={"fy_id": fy_id},
     )
-    r.raise_for_status()
-    return r.json()
 
 
-async def _list_investment_accounts(ctx: RunContext[StowDeps]) -> list[dict]:
+@tool_safe("list_investment_accounts")
+async def _list_investment_accounts(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all investment accounts (equity_mf, stock, fd, ppf)."""
     await emit("Fetching investment accounts")
-    r = await ctx.deps.http_client.get(f"{ctx.deps.base_url}/accounts")
-    r.raise_for_status()
-    accounts = r.json()
+    accounts = await stow_get(ctx.deps, "/accounts", tool_name="list_investment_accounts")
+    if is_tool_error(accounts):
+        return accounts
     return [a for a in accounts if a.get("investment_subtype")]
 
 
