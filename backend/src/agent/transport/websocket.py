@@ -56,9 +56,10 @@ async def _upload_pdf_to_batch(
         )
         r.raise_for_status()
         batch = r.json()
+        bank_hint = f" Detected bank: {batch['detected_bank']}." if batch.get("detected_bank") else ""
         return (
             f"[IMPORT_BATCH:{batch['id']}:{fname}] "
-            f"Bank statement parsed — {batch['row_count']} rows ready for review."
+            f"Bank statement parsed — {batch['row_count']} rows ready for review.{bank_hint}"
         )
     except Exception as exc:
         return f"Sorry, I couldn't parse the bank statement PDF ({exc}). Please try again."

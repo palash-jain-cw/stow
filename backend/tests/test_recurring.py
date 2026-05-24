@@ -1,27 +1,24 @@
 from datetime import date, timedelta
 import pytest
 
+from tests.helpers import get_or_create_account, get_or_create_fy, fy_bounds_for_date
+
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture()
 def fy(client):
-    return client.post("/financial-years", json={
-        "start_date": "2025-04-01",
-        "end_date": "2026-03-31",
-    }).json()
+    return get_or_create_fy(client, "2025-04-01", "2026-03-31")
 
 
 @pytest.fixture()
 def bank(client):
-    grp = next(g for g in client.get("/account-groups").json() if g["name"] == "Bank Accounts")
-    return client.post("/accounts", json={"name": "Recurring Bank", "group_id": grp["id"]}).json()
+    return get_or_create_account(client, "Recurring Bank", "Bank Accounts")
 
 
 @pytest.fixture()
 def expense_account(client):
-    grp = next(g for g in client.get("/account-groups").json() if g["name"] == "Indirect Expenses")
-    return client.post("/accounts", json={"name": "Rent", "group_id": grp["id"]}).json()
+    return get_or_create_account(client, "Rent", "Indirect Expenses")
 
 
 @pytest.fixture()
@@ -36,6 +33,7 @@ def template_txn(client, fy, bank, expense_account):
             {"account_id": bank["id"], "amount": -5_000_000},
         ],
     })
+    assert resp.status_code == 201, resp.text
     return resp.json()
 
 
@@ -138,12 +136,9 @@ def test_due_today_shows_pending_queue_items(client, session, template_txn):
 # ── Slice 5: POST /recurring/queue/{id}/confirm ───────────────────────────────
 
 def test_confirm_creates_posted_transaction(client, session, template_txn):
-    # Ensure a FY covering today exists so the clone can find one
     today = date.today()
-    client.post("/financial-years", json={
-        "start_date": f"{today.year}-04-01",
-        "end_date": f"{today.year + 1}-03-31",
-    })
+    start, end = fy_bounds_for_date(today)
+    get_or_create_fy(client, start, end)
     make_schedule(client, template_txn["id"], frequency="daily",
                   first_due_date=today.isoformat())
     _run_morning_job(client, session, today)
@@ -324,10 +319,8 @@ def test_auto_post_pending_creates_auto_posted_transaction(client, session, temp
     from stow.recurring import auto_post_pending
 
     today = date.today()
-    client.post("/financial-years", json={
-        "start_date": f"{today.year}-04-01",
-        "end_date": f"{today.year + 1}-03-31",
-    })
+    start, end = fy_bounds_for_date(today)
+    get_or_create_fy(client, start, end)
     make_schedule(client, template_txn["id"], frequency="daily",
                   first_due_date=today.isoformat())
     _run_morning_job(client, session, today)

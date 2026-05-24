@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 PROPOSAL_PREFIX = "PROPOSAL:"
 
-_REQUIRED_FIELDS = ("type", "date", "from_account_id", "to_account_id", "fy_id")
+_REQUIRED_FIELDS = ("type", "date", "from_account_id", "to_account_id")
 
 # user_key -> {proposal_id: normalized proposal}
 _pending: dict[str, dict[str, dict[str, Any]]] = {}
@@ -144,7 +144,6 @@ async def execute_proposal(
         "type": data["type"],
         "date": data["date"],
         "narration": data["narration"],
-        "fy_id": data["fy_id"],
         "entries": [
             {"account_id": data["from_account_id"], "amount": -data["amount_paise"]},
             {"account_id": data["to_account_id"], "amount": data["amount_paise"]},

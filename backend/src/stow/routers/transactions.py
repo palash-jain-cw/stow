@@ -6,16 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from stow.db import get_session
+from stow.fy_resolution import FyResolutionError, raise_http_from_fy_error, resolve_fy_for_posting
 from stow.models import Account, CapitalGainEntry, Entry, FdMetadata, FinancialYear, Lot, Transaction, TransactionAuditLog
+from stow.transaction_numbers import next_transaction_number
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
-
-_TYPE_ABBR = {
-    "payment": "PAY",
-    "receipt": "REC",
-    "journal": "JRN",
-    "contra": "CTR",
-}
 
 
 class EntryIn(BaseModel):
@@ -27,7 +22,7 @@ class TransactionIn(BaseModel):
     type: str
     date: _date
     narration: str
-    fy_id: int
+    fy_id: Optional[int] = None
     entries: list[EntryIn]
     tags: Optional[list[str]] = None
     attachment_path: Optional[str] = None
@@ -63,19 +58,6 @@ def _entry_out(entry: Entry, session: Session) -> EntryOut:
     )
 
 
-def _next_number(session: Session, fy: FinancialYear, txn_type: str) -> str:
-    abbr = _TYPE_ABBR[txn_type]
-    fy_year = fy.start_date.year
-    existing = session.exec(
-        select(Transaction).where(
-            Transaction.fy_id == fy.id,
-            Transaction.type == txn_type,
-        )
-    ).all()
-    seq = len(existing) + 1
-    return f"{abbr}-{fy_year}-{seq:03d}"
-
-
 def _validate_balance(entries: list[EntryIn]) -> None:
     if sum(e.amount for e in entries) != 0:
         raise HTTPException(status_code=422, detail="Entries must sum to zero")
@@ -95,21 +77,20 @@ def _sync_investment_dates(session: Session, txn_id: int, new_date: _date) -> No
 
 @router.post("", response_model=TransactionOut, status_code=201)
 def create_transaction(data: TransactionIn, session: Session = Depends(get_session)):
-    fy = session.get(FinancialYear, data.fy_id)
-    if not fy:
-        raise HTTPException(status_code=404, detail="Financial year not found")
-    if fy.status == "locked":
-        raise HTTPException(status_code=403, detail="Financial year is locked")
+    try:
+        fy, _ = resolve_fy_for_posting(session, data.date, data.fy_id)
+    except FyResolutionError as exc:
+        raise_http_from_fy_error(exc)
 
     _validate_balance(data.entries)
 
-    number = _next_number(session, fy, data.type)
+    number = next_transaction_number(session, fy, data.type)
     txn = Transaction(
         number=number,
         type=data.type,
         date=data.date,
         narration=data.narration,
-        fy_id=data.fy_id,
+        fy_id=fy.id,
         tags=data.tags,
         attachment_path=data.attachment_path,
     )
@@ -260,6 +241,13 @@ def update_transaction(
         setattr(txn, field, value)
 
     if data.date is not None:
+        try:
+            target_fy, _ = resolve_fy_for_posting(session, data.date)
+        except FyResolutionError as exc:
+            raise_http_from_fy_error(exc)
+        if target_fy.id != txn.fy_id:
+            txn.fy_id = target_fy.id
+            txn.number = next_transaction_number(session, target_fy, txn.type)
         _sync_investment_dates(session, txn_id, data.date)
 
     if data.entries is not None:

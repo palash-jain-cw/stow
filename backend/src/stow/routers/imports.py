@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 from stow.ai_agent import get_ai_agent
 from stow.db import get_session
 from stow.import_parsers import ParsedStatement, extract_pdf_text, parse_statement
-from stow.import_pipeline import detect_duplicates, confirm_batch
+from stow.import_pipeline import detect_duplicates, confirm_batch, map_accounts
 from stow.models import ImportBatch, StagingRow, Transaction, Entry, FinancialYear
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -92,6 +92,7 @@ async def upload_statement(
     session.commit()
 
     detect_duplicates(session, batch.id)
+    map_accounts(session, batch.id)
 
     row_count = session.exec(
         select(StagingRow).where(StagingRow.batch_id == batch.id)
@@ -183,11 +184,13 @@ class MatchIn(BaseModel):
 
 class ConfirmIn(BaseModel):
     bank_account_id: int
-    fy_id: int
+    fy_id: int | None = None
 
 
 class ConfirmOut(BaseModel):
     posted_count: int
+    skipped_count: int
+    skipped: list[dict[str, str | int]]
     status: str
 
 
@@ -256,5 +259,13 @@ def confirm(
     batch = session.get(ImportBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="Import batch not found")
-    posted = confirm_batch(session, batch_id, body.bank_account_id, body.fy_id)
-    return ConfirmOut(posted_count=posted, status="posted")
+    try:
+        result = confirm_batch(session, batch_id, body.bank_account_id, body.fy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ConfirmOut(
+        posted_count=result.posted_count,
+        skipped_count=result.skipped_count,
+        skipped=result.skipped,
+        status="posted" if result.posted_count else "ready",
+    )

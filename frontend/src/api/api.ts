@@ -40,7 +40,8 @@ export const queryKeys = {
     detail: (id: string) => ['transactions', id] as const,
   },
   accounts: {
-    list: () => ['accounts'] as const,
+    list: (scope?: 'active' | 'position') =>
+      scope ? (['accounts', scope] as const) : (['accounts'] as const),
     detail: (id: string) => ['accounts', id] as const,
     ledger: (id: string) => ['accounts', id, 'ledger'] as const,
     openingBalance: (id: number) => ['accounts', id, 'opening-balance'] as const,

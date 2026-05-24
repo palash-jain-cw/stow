@@ -6,7 +6,7 @@ from pydantic_ai import Agent, RunContext
 
 from agent.activity import emit
 from agent.deps import StowDeps
-from agent.subagents.transaction import _get_active_fy, _list_accounts
+from agent.subagents.transaction import _get_active_fy, _get_fy_for_date, _list_accounts
 from agent.tool_errors import is_tool_error, stow_get, stow_post, tool_safe
 
 _INSTRUCTIONS = """\
@@ -57,7 +57,7 @@ Principal + accrued interest are credited to to_account; interest income is reco
 
 ## Queries
 ## Resolving accounts and FY before every operation
-Always call get_active_fy to get the fy_id before creating any investment.
+Use get_fy_for_date with the transaction date to resolve fy_id (or omit fy_id; the server resolves from date).
 Call list_accounts to resolve account names to IDs (bank, trading, investment accounts).
 Call list_fds or list_investment_accounts to find existing investment account IDs.
 
@@ -243,6 +243,7 @@ def build_investment_agent(model: Any) -> Agent[StowDeps, str]:
         instructions=_INSTRUCTIONS,
         tools=[
             _get_active_fy,
+            _get_fy_for_date,
             _list_accounts,
             _create_fd,
             _mature_fd,

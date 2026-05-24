@@ -1,8 +1,11 @@
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session, col, select
 from stow.db import get_session
 from stow.depreciation import unposted_depreciation
+from stow.fy_repair import repair_fy_assignments
+from stow.fy_resolution import ensure_fy_for_date
 from stow.models import Account, AccountGroup, Entry, FinancialYear, Transaction
 
 router = APIRouter(prefix="/financial-years", tags=["financial-years"])
@@ -29,6 +32,63 @@ def create_financial_year(fy: FinancialYear, session: Session = Depends(get_sess
     session.commit()
     session.refresh(fy)
     return fy
+
+
+@router.get("/for-date")
+def fy_for_date(
+    date: date,
+    auto_create: bool = Query(default=False),
+    session: Session = Depends(get_session),
+):
+    try:
+        fy, created = ensure_fy_for_date(session, date, auto_create=auto_create)
+        if auto_create and created:
+            session.commit()
+            session.refresh(fy)
+        return {"fy": fy, "created": created}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+class RepairSummaryOut(BaseModel):
+    moved: int
+    dry_run: bool
+    skipped_locked: list[dict]
+    fys_created: list[dict]
+    move_buckets: list[dict]
+
+
+@router.post("/repair-assignments", response_model=RepairSummaryOut)
+def repair_assignments(
+    dry_run: bool = Query(default=True),
+    session: Session = Depends(get_session),
+):
+    summary = repair_fy_assignments(session, dry_run=dry_run)
+    return RepairSummaryOut(
+        moved=summary.moved,
+        dry_run=summary.dry_run,
+        skipped_locked=[
+            {"txn_id": s.txn_id, "reason": s.reason} for s in summary.skipped_locked
+        ],
+        fys_created=[
+            {
+                "fy_id": c.fy_id,
+                "start_date": c.start_date.isoformat(),
+                "end_date": c.end_date.isoformat(),
+                "txn_count": c.txn_count,
+            }
+            for c in summary.fys_created
+        ],
+        move_buckets=[
+            {
+                "start_date": b.start_date.isoformat(),
+                "end_date": b.end_date.isoformat(),
+                "txn_count": b.txn_count,
+                "will_create": b.will_create,
+            }
+            for b in summary.move_buckets
+        ],
+    )
 
 
 @router.get("/{fy_id}", response_model=FinancialYear)

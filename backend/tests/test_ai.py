@@ -1,7 +1,7 @@
 import pytest
 from datetime import date as dt_date
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import stow.ai_config as ai_config_module
 from stow.main import app
@@ -132,38 +132,42 @@ def mock_agent():
     return agent
 
 
-def test_test_connection_ok(client, mock_agent, monkeypatch):
+def test_test_connection_ok(client, monkeypatch):
     monkeypatch.setenv("STOW_LLM_MODEL", "qwen3:30b")
-    app.dependency_overrides[get_ai_agent] = lambda: mock_agent
-    try:
+
+    async def fake_run(*args, **kwargs):
+        result = MagicMock()
+        result.output = "pong"
+        return result
+
+    mock_agent = MagicMock()
+    mock_agent.run = fake_run
+
+    with patch("pydantic_ai.Agent", return_value=mock_agent):
         r = client.post("/ai/test-connection")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["ok"] is True
-        assert data["model"] == "qwen3:30b"
-        assert isinstance(data["latency_ms"], (int, float))
-    finally:
-        app.dependency_overrides.pop(get_ai_agent, None)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["model"] == "qwen3:30b"
+    assert isinstance(data["latency_ms"], (int, float))
 
 
-# ---------------------------------------------------------------------------
-# Slice 4: POST /ai/test-connection — connection failure
-# ---------------------------------------------------------------------------
-
-def test_test_connection_failure(client):
+def test_test_connection_failure(client, monkeypatch):
     import httpx
-    failing_agent = MagicMock()
-    failing_agent.run = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
-    app.dependency_overrides[get_ai_agent] = lambda: failing_agent
-    try:
+
+    async def failing_run(*args, **kwargs):
+        raise httpx.ConnectError("Connection refused")
+
+    mock_agent = MagicMock()
+    mock_agent.run = failing_run
+
+    with patch("pydantic_ai.Agent", return_value=mock_agent):
         r = client.post("/ai/test-connection")
-        assert r.status_code == 200
-        data = r.json()
-        assert data["ok"] is False
-        assert "Connection refused" in data["error"]
-        assert data["latency_ms"] is None
-    finally:
-        app.dependency_overrides.pop(get_ai_agent, None)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is False
+    assert "Connection refused" in data["error"]
+    assert data["latency_ms"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +185,7 @@ def test_parse_transaction_returns_structured_dict(client, mock_agent):
         confidence=0.92,
     )
     result = MagicMock()
-    result.data = parsed
+    result.output = parsed
     mock_agent.run = AsyncMock(return_value=result)
 
     app.dependency_overrides[get_ai_agent] = lambda: mock_agent
@@ -220,7 +224,7 @@ def test_parse_transaction_prompt_includes_today(client, mock_agent):
         confidence=0.95,
     )
     result = MagicMock()
-    result.data = parsed
+    result.output = parsed
     mock_agent.run = AsyncMock(return_value=result)
 
     app.dependency_overrides[get_ai_agent] = lambda: mock_agent

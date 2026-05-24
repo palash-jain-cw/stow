@@ -25,7 +25,7 @@ retry with corrected inputs, or ask the user one clarifying question.
 ## CRITICAL: Proposal-first flow for new transactions — NEVER skip this
 
 When asked to record a new transaction from natural language or extracted image data:
-  1. Call get_active_fy → note the fy_id.
+  1. Call get_fy_for_date with the transaction date → note fy_id (or omit fy_id; server resolves from date).
   2. Call list_accounts → note account names for the two accounts involved.
   3. Call parse_natural_language with the description text.
   4. Combine the result into this exact JSON and return it as your output — then STOP:
@@ -68,6 +68,18 @@ async def _get_active_fy(ctx: RunContext[StowDeps]) -> dict | str:
     if not active:
         active = next((fy for fy in fys if fy["status"] == "open"), None)
     return active or {}
+
+
+@tool_safe("get_fy_for_date")
+async def _get_fy_for_date(ctx: RunContext[StowDeps], date: str) -> dict | str:
+    """Resolve the financial year for a transaction date (YYYY-MM-DD)."""
+    await emit("Resolving financial year for date")
+    return await stow_get(
+        ctx.deps,
+        "/financial-years/for-date",
+        tool_name="get_fy_for_date",
+        params={"date": date[:10]},
+    )
 
 
 @tool_safe("list_accounts")
@@ -235,6 +247,7 @@ def build_transaction_agent(model: Any) -> Agent[StowDeps, str]:
         instructions=_INSTRUCTIONS,
         tools=[
             _get_active_fy,
+            _get_fy_for_date,
             _list_accounts,
             _parse_natural_language,
             _create_transaction,

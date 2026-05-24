@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 from stow.db import get_session
-from stow.models import Account, Entry, OpeningBalance, Transaction
+from stow.models import Account, FinancialYear, OpeningBalance
 
 router = APIRouter(tags=["opening-balances"])
 
@@ -37,19 +37,12 @@ def put_opening_balance(
     if not session.get(Account, account_id):
         raise HTTPException(status_code=404, detail="Account not found")
 
-    # Reject if any transaction entry exists for this account in the given FY
-    txn_in_fy = session.exec(
-        select(Transaction).where(Transaction.fy_id == data.fy_id)
-    ).all()
-    txn_ids = [t.id for t in txn_in_fy]
-    if txn_ids:
-        entry_exists = session.exec(
-            select(Entry)
-            .where(Entry.account_id == account_id)
-            .where(col(Entry.transaction_id).in_(txn_ids))
-        ).first()
-        if entry_exists:
-            raise HTTPException(status_code=409, detail="Cannot edit opening balance after transactions exist")
+    fy = session.get(FinancialYear, data.fy_id)
+    if fy is None:
+        raise HTTPException(status_code=404, detail="Financial year not found")
+    if fy.status == "locked":
+        raise HTTPException(status_code=403, detail="Financial year is locked")
+
     ob = session.exec(
         select(OpeningBalance)
         .where(OpeningBalance.account_id == account_id)

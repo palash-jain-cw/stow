@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 from unittest.mock import MagicMock
+import uuid
 
 import httpx
 import pytest
@@ -46,8 +47,10 @@ from agent.subagents.import_agent import (
     _update_staging_row,
     _confirm_staging,
     _get_batch,
+    _match_bank_account,
 )
 from agent.deps import StowDeps
+from tests.helpers import get_or_create_fy, set_only_active_fy
 
 
 # ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -84,15 +87,10 @@ def ctx(deps):
 
 
 @pytest.fixture()
-async def fy(client):
-    """Create an active financial year and return it."""
-    r = client.post("/financial-years", json={
-        "start_date": "2026-04-01",
-        "end_date": "2027-03-31",
-        "status": "active",
-    })
-    assert r.status_code == 201
-    return r.json()
+async def fy(client, session):
+    fy = get_or_create_fy(client, "2026-04-01", "2027-03-31", status="active")
+    set_only_active_fy(session, fy["id"])
+    return fy
 
 
 @pytest.fixture()
@@ -106,10 +104,10 @@ async def two_accounts(client, session):
     expense_group = session.exec(
         select(AccountGroup).where(AccountGroup.nature == "expense")
     ).first()
-
-    r1 = client.post("/accounts", json={"name": "Test Bank", "group_id": asset_group.id, "currency": "INR"})
+    suffix = uuid.uuid4().hex[:8]
+    r1 = client.post("/accounts", json={"name": f"Test Bank {suffix}", "group_id": asset_group.id, "currency": "INR"})
     assert r1.status_code == 201
-    r2 = client.post("/accounts", json={"name": "Test Expense", "group_id": expense_group.id, "currency": "INR"})
+    r2 = client.post("/accounts", json={"name": f"Test Expense {suffix}", "group_id": expense_group.id, "currency": "INR"})
     assert r2.status_code == 201
     return r1.json(), r2.json()
 
@@ -125,8 +123,8 @@ class TestTransactionTools:
     async def test_list_accounts(self, ctx, two_accounts):
         result = await _list_accounts(ctx)
         names = [a["name"] for a in result]
-        assert "Test Bank" in names
-        assert "Test Expense" in names
+        bank, _ = two_accounts
+        assert bank["name"] in names
 
     async def test_create_and_get_transaction(self, ctx, fy, two_accounts):
         bank, expense = two_accounts
@@ -206,7 +204,7 @@ class TestAccountTools:
         bank, _ = two_accounts
         result = await _get_account(ctx, bank["id"])
         assert result["id"] == bank["id"]
-        assert result["name"] == "Test Bank"
+        assert result["name"] == bank["name"]
 
     async def test_create_account(self, ctx, session):
         from sqlmodel import select
@@ -250,8 +248,9 @@ class TestReportTools:
     async def test_list_accounts(self, ctx, two_accounts):
         result = await _report_list_accounts(ctx)
         assert isinstance(result, list)
+        bank, _ = two_accounts
         names = [a["name"] for a in result]
-        assert "Test Bank" in names
+        assert bank["name"] in names
 
     async def test_list_transactions_no_filter(self, ctx, fy, two_accounts):
         bank, expense = two_accounts
@@ -361,6 +360,27 @@ class TestImportAgentTools:
         result = await _get_batch(ctx, batch["batch_id"])
         assert "counts" in result
         assert "pending" in result["counts"]
+
+    async def test_match_bank_account_from_detected_bank(self, ctx, batch, session):
+        from sqlmodel import select
+        from stow.models import Account, AccountGroup, ImportBatch
+
+        grp = session.exec(
+            select(AccountGroup).where(AccountGroup.name == "Bank Accounts")
+        ).first()
+        assert grp is not None
+        acc = Account(name="Agent Tools HDFC Bank", group_id=grp.id)
+        session.add(acc)
+        session.flush()
+        b = session.get(ImportBatch, batch["batch_id"])
+        b.detected_bank = "HDFC Bank"
+        session.add(b)
+        session.commit()
+        session.refresh(acc)
+
+        result = await _match_bank_account(ctx, batch["batch_id"])
+        assert isinstance(result, dict)
+        assert result["id"] == acc.id
 
 
 # ─── Dep isolation test ────────────────────────────────────────────────────

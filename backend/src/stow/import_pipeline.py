@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import fnmatch
-from datetime import timedelta, date as date_type
+import logging
+from dataclasses import dataclass, field
+from datetime import timedelta
 
 from sqlmodel import Session, select
 
+from stow.fy_resolution import FyResolutionError, resolve_fy_for_posting
 from stow.models import Entry, ImportBatch, MerchantRule, StagingRow, Transaction
+
+logger = logging.getLogger(__name__)
+
+BANK_GROUPS = {"Bank Accounts", "Cash-in-Hand"}
 
 
 def match_merchant_rule(session: Session, description: str) -> int | None:
@@ -43,8 +50,42 @@ def detect_duplicates(session: Session, batch_id: int) -> None:
     session.commit()
 
 
-def confirm_batch(session: Session, batch_id: int, bank_account_id: int, fy_id: int) -> int:
-    """Post all confirmed staging rows as Transactions. Returns count of posted rows."""
+@dataclass
+class ConfirmBatchResult:
+    posted_count: int = 0
+    skipped_count: int = 0
+    skipped: list[dict[str, str | int]] = field(default_factory=list)
+
+
+def match_bank_account(accounts: list[dict], detected_bank: str | None) -> dict | None:
+    """Match parsed bank name to a ledger bank/cash account."""
+    if not detected_bank:
+        return None
+    bank_accounts = [
+        a for a in accounts
+        if a.get("group_name") in BANK_GROUPS and not a.get("is_archived")
+    ]
+    detected = detected_bank.lower()
+    for account in bank_accounts:
+        name = account["name"].lower()
+        if name in detected or detected in name:
+            return account
+    for token in detected.replace("-", " ").split():
+        if len(token) < 4:
+            continue
+        for account in bank_accounts:
+            if token in account["name"].lower():
+                return account
+    return None
+
+
+def confirm_batch(
+    session: Session,
+    batch_id: int,
+    bank_account_id: int,
+    fy_id: int | None = None,
+) -> ConfirmBatchResult:
+    """Post confirmed staging rows as transactions. Skips unmapped or invalid rows."""
     rows = session.exec(
         select(StagingRow).where(
             StagingRow.batch_id == batch_id,
@@ -56,13 +97,37 @@ def confirm_batch(session: Session, batch_id: int, bank_account_id: int, fy_id: 
         t.number for t in session.exec(select(Transaction)).all()
     }
 
-    posted = 0
+    result = ConfirmBatchResult()
     for row in rows:
+        if row.suggested_account_id is None:
+            result.skipped_count += 1
+            result.skipped.append({
+                "row_id": row.id or 0,
+                "reason": "no account mapped — assign an expense/income account before posting",
+            })
+            logger.warning("Skipping import row id=%s: no suggested_account_id", row.id)
+            continue
+
         amount = abs(row.amount)
         is_debit = row.amount < 0
         narration = row.narration_override or row.description
 
-        # Generate a unique transaction number
+        try:
+            fy, _ = resolve_fy_for_posting(session, row.date, fy_id)
+        except FyResolutionError as exc:
+            result.skipped_count += 1
+            result.skipped.append({"row_id": row.id or 0, "reason": exc.detail})
+            logger.warning(
+                "Skipping import row id=%s on %s: %s",
+                row.id,
+                row.date,
+                exc.detail,
+            )
+            continue
+
+        if fy.status == "open":
+            fy.status = "active"
+
         base = f"IMP-{row.date.strftime('%Y%m%d')}-{row.id}"
         number = base
         suffix = 1
@@ -76,34 +141,48 @@ def confirm_batch(session: Session, batch_id: int, bank_account_id: int, fy_id: 
             type="payment" if is_debit else "receipt",
             date=row.date,
             narration=narration,
-            fy_id=fy_id,
+            fy_id=fy.id,
             tags=row.tags,
         )
         session.add(txn)
-        session.commit()
-        session.refresh(txn)
+        session.flush()
+        assert txn.id is not None
 
         if is_debit:
-            debit_account = row.suggested_account_id or bank_account_id
-            session.add(Entry(transaction_id=txn.id, account_id=debit_account, amount=amount))
-            session.add(Entry(transaction_id=txn.id, account_id=bank_account_id, amount=-amount))
+            session.add(Entry(
+                transaction_id=txn.id,
+                account_id=row.suggested_account_id,
+                amount=amount,
+            ))
+            session.add(Entry(
+                transaction_id=txn.id,
+                account_id=bank_account_id,
+                amount=-amount,
+            ))
         else:
-            session.add(Entry(transaction_id=txn.id, account_id=bank_account_id, amount=amount))
-            credit_account = row.suggested_account_id or bank_account_id
-            session.add(Entry(transaction_id=txn.id, account_id=credit_account, amount=-amount))
+            session.add(Entry(
+                transaction_id=txn.id,
+                account_id=bank_account_id,
+                amount=amount,
+            ))
+            session.add(Entry(
+                transaction_id=txn.id,
+                account_id=row.suggested_account_id,
+                amount=-amount,
+            ))
 
         row.status = "reconciled"
         session.add(row)
-        posted += 1
+        result.posted_count += 1
 
     batch = session.get(ImportBatch, batch_id)
     if batch:
-        batch.status = "posted"
+        batch.status = "posted" if result.posted_count else batch.status
         batch.bank_account_id = bank_account_id
         session.add(batch)
 
     session.commit()
-    return posted
+    return result
 
 
 def map_accounts(session: Session, batch_id: int) -> None:

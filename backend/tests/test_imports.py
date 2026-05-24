@@ -432,6 +432,7 @@ def test_confirm_batch_posts_transactions(client, seeded_batch, session, fy, ban
     assert r.status_code == 200
     data = r.json()
     assert data["posted_count"] == 2
+    assert data["skipped_count"] == 0
     assert data["status"] == "posted"
 
 
@@ -466,3 +467,90 @@ def test_merchant_rules_crud(client, bank_account, expense_account):
     r = client.get("/merchant-rules")
     patterns = [x["pattern"] for x in r.json()]
     assert "SWIGGY_CRUD_UP*" not in patterns
+
+
+# ---------------------------------------------------------------------------
+# confirm_batch skips unmapped rows instead of posting bank-to-bank
+# ---------------------------------------------------------------------------
+
+def test_confirm_skips_rows_without_account_mapping(
+    client, session, fy, bank_account, expense_account
+):
+    batch = ImportBatch(filename="skip_test.pdf", status="ready")
+    session.add(batch)
+    session.flush()
+    mapped = StagingRow(
+        batch_id=batch.id,
+        raw_data={},
+        date=date(2026, 5, 1),
+        amount=-10000,
+        description="SKIP_TEST_MAPPED",
+        suggested_account_id=expense_account.id,
+        status="confirmed",
+    )
+    unmapped = StagingRow(
+        batch_id=batch.id,
+        raw_data={},
+        date=date(2026, 5, 2),
+        amount=-20000,
+        description="SKIP_TEST_UNMAPPED",
+        status="confirmed",
+    )
+    session.add_all([mapped, unmapped])
+    session.commit()
+
+    r = client.post(
+        f"/imports/{batch.id}/confirm",
+        json={"bank_account_id": bank_account.id, "fy_id": fy.id},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["posted_count"] == 1
+    assert data["skipped_count"] == 1
+    assert any("no account mapped" in s["reason"] for s in data["skipped"])
+
+
+def test_upload_applies_merchant_rules(session, client, expense_account):
+    from stow.import_parsers import ParsedRow, ParsedStatement
+
+    unique = "ZXY_UPLOAD_RULE_TEST"
+    session.add(MerchantRule(pattern=f"{unique}*", account_id=expense_account.id))
+    session.commit()
+
+    parsed = ParsedStatement(
+        bank="HDFC Bank",
+        statement_from=date(2026, 4, 1),
+        statement_to=date(2026, 4, 30),
+        rows=[
+            ParsedRow(
+                date=date(2026, 4, 10),
+                amount_paise=-45000,
+                description=f"{unique} ORDER",
+            )
+        ],
+    )
+
+    mock_agent = MagicMock()
+    with patch("stow.routers.imports.parse_statement", new=AsyncMock(return_value=parsed)):
+        with patch("stow.routers.imports.extract_pdf_text", return_value="fake"):
+            with patch("stow.routers.imports.get_ai_agent", return_value=mock_agent):
+                r = client.post(
+                    "/imports",
+                    files={"file": ("stmt.pdf", b"%PDF fake", "application/pdf")},
+                )
+    assert r.status_code == 201
+    batch_id = r.json()["id"]
+    rows = client.get(f"/imports/{batch_id}/rows").json()
+    assert rows[0]["suggested_account_id"] == expense_account.id
+
+
+def test_match_bank_account_helper():
+    from stow.import_pipeline import match_bank_account
+
+    accounts = [
+        {"id": 1, "name": "Union Bank Savings Account", "group_name": "Bank Accounts", "is_archived": False},
+        {"id": 2, "name": "Axis Bank Savings Account", "group_name": "Bank Accounts", "is_archived": False},
+    ]
+    matched = match_bank_account(accounts, "Union Bank of India")
+    assert matched is not None
+    assert matched["id"] == 1

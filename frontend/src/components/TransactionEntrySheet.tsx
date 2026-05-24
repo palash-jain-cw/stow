@@ -4,6 +4,7 @@ import { ChevronDown, Plus, Paperclip, CheckCircle, AlertCircle, X, ChevronUp } 
 import { Sheet } from './Sheet'
 import { Tooltip } from './Tooltip'
 import { api, queryKeys } from '../api/api'
+import { formatFyLabel, resolveFyForDate } from './fyHelpers'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -564,6 +565,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
     queryFn: () => api.get<FinancialYear[]>('/financial-years'),
   })
   const activeFy = fys.find(fy => fy.status === 'active')
+  const resolvedFy = resolveFyForDate(fys, draft.date)
 
   // Journal balance check
   const journalDr = journalEntries.reduce((s, e) => s + rupeesToPaise(e.dr), 0)
@@ -595,8 +597,6 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
   // Save mutation
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!activeFy) throw new Error('No active financial year. Please create one in Settings.')
-
       let entries: { account_id: number; amount: number }[]
 
       if (draft.type === 'journal') {
@@ -615,14 +615,14 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
         ]
       }
 
-      const body = {
+      const body: Record<string, unknown> = {
         type: draft.type,
         date: draft.date,
         narration: draft.narration,
-        fy_id: activeFy.id,
         entries,
         tags: draft.tags.length ? draft.tags : null,
       }
+      if (resolvedFy) body.fy_id = resolvedFy.id
 
       let txn: TransactionOut
       if (isEdit && editTxn) {
@@ -674,6 +674,20 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <div className="space-y-5">
+
+        {resolvedFy ? (
+          resolvedFy.id !== activeFy?.id && (
+            <div className="flex items-start gap-2 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Posting to FY {formatFyLabel(resolvedFy)} (from transaction date)</span>
+            </div>
+          )
+        ) : (
+          <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>No FY covers this date — a new year will be created when you save.</span>
+          </div>
+        )}
 
         {/* Type pills */}
         <div>
@@ -918,7 +932,7 @@ export function TransactionEntrySheet({ open, onClose, prefill, editTxn, onSaved
           <button
             type="button"
             onClick={handleSave}
-            disabled={!canSave || saveMutation.isPending || !activeFy}
+            disabled={!canSave || saveMutation.isPending}
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
           >
             {saveMutation.isPending ? 'Saving…' : isEdit ? 'Update' : 'Save'}

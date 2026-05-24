@@ -15,10 +15,13 @@ import {
   unitsToMilliunits,
   type AccountOption,
 } from './investmentHelpers'
+import { formatFyLabel, resolveFyForDate } from './fyHelpers'
 
 interface FinancialYear {
   id: number
   status: string
+  start_date: string
+  end_date: string
 }
 
 interface CapitalGainEntryOut {
@@ -95,6 +98,7 @@ export function InvestmentTradeSheet({
   })
 
   const activeFy = resolveActiveFy(fys)
+  const resolvedFy = resolveFyForDate(fys, date)
   const investmentAccounts = investmentAccountsForSelect(accounts, subtype)
   const bankAccounts = bankAccountsForSelect(accounts)
 
@@ -104,7 +108,6 @@ export function InvestmentTradeSheet({
   const maxUnitsDisplay = maxUnitsMilli != null ? maxUnitsMilli / 1000 : null
 
   const canSubmit =
-    !!activeFy &&
     investmentAccountId !== '' &&
     bankAccountId !== '' &&
     unitsMilli > 0 &&
@@ -113,7 +116,6 @@ export function InvestmentTradeSheet({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!activeFy) throw new Error('No active financial year. Please create one in Settings.')
       if (investmentAccountId === '' || bankAccountId === '') {
         throw new Error('Please select all accounts.')
       }
@@ -121,8 +123,7 @@ export function InvestmentTradeSheet({
         throw new Error(`Cannot sell more than ${maxUnitsMilli / 1000} units.`)
       }
 
-      const body = {
-        fy_id: activeFy.id,
+      const body: Record<string, unknown> = {
         date,
         units: unitsMilli,
         bank_account_id: bankAccountId,
@@ -131,6 +132,7 @@ export function InvestmentTradeSheet({
           ? { cost_per_unit: pricePaise }
           : { price_per_unit: pricePaise }),
       }
+      if (resolvedFy) body.fy_id = resolvedFy.id
 
       if (mode === 'buy') {
         const result = await api.post(`/investments/${investmentAccountId}/buy`, body)
@@ -162,10 +164,17 @@ export function InvestmentTradeSheet({
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <div className="space-y-5">
-        {!activeFy && (
+        {resolvedFy ? (
+          resolvedFy.id !== activeFy?.id && (
+            <div className="flex items-start gap-2 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Posting to FY {formatFyLabel(resolvedFy)} (from transaction date)</span>
+            </div>
+          )
+        ) : (
           <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>No active financial year. Create one in Settings before recording trades.</span>
+            <span>No FY covers this date — a new year will be created when you save.</span>
           </div>
         )}
 

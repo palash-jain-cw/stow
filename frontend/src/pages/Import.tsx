@@ -322,7 +322,7 @@ export default function Import() {
   // ── Post ──────────────────────────────────────────────────────────────────
 
   async function handlePost() {
-    if (!batch || bankAccountId === '' || !activeFy) return
+    if (!batch || bankAccountId === '') return
     setPosting(true)
     setPostError(null)
     try {
@@ -333,7 +333,7 @@ export default function Import() {
       }
       const result = await api.post<{ posted_count: number }>(
         `/imports/${batch.id}/confirm`,
-        { bank_account_id: bankAccountId, fy_id: activeFy.id }
+        { bank_account_id: bankAccountId }
       )
       setConfirmResult({ posted: result.posted_count, reconciled: confirmCounts.reconciled, skipped: confirmCounts.skipped })
       setStep('done')
@@ -718,7 +718,7 @@ export default function Import() {
               <button onClick={() => setStep(2)} className="flex-1 py-2.5 text-sm text-zinc-600 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
                 ← Back to review
               </button>
-              <button onClick={handlePost} disabled={posting || !activeFy}
+              <button onClick={handlePost} disabled={posting || bankAccountId === ''}
                 className="flex-1 py-2.5 text-sm font-medium text-white bg-zinc-900 rounded-xl hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                 {posting ? 'Posting…' : `Post ${confirmCounts.posted} transactions`}
               </button>

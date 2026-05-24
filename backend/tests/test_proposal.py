@@ -319,6 +319,7 @@ class TestProposalActions:
             {"account_id": 5, "amount": -25000},
             {"account_id": 9, "amount": 25000},
         ]
+        assert "fy_id" not in payload
         assert "tags" not in payload
 
     @pytest.mark.asyncio

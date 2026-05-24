@@ -151,36 +151,74 @@ function LivePriceHint({ items }: { items: AccountWithPortfolio[] }) {
 
 // ── Allocation bar ────────────────────────────────────────────────────────────
 
+interface AccountWithPortfolio {
+  account: AccountOut
+  lots: PortfolioItemOut[]
+}
+
+function sumHoldingsCostBasis(items: AccountWithPortfolio[] | undefined): number {
+  return (items ?? []).reduce(
+    (s, { lots }) =>
+      s + lots.filter(l => l.remaining_units > 0).reduce((a, l) => a + l.cost_basis, 0),
+    0,
+  )
+}
+
+function sumHoldingsCurrentValue(items: AccountWithPortfolio[] | undefined): number | null {
+  const lots = (items ?? []).flatMap(({ lots }) => lots.filter(l => l.remaining_units > 0))
+  if (lots.length === 0) return 0
+  if (!lots.every(l => l.current_value !== null)) return null
+  return lots.reduce((s, l) => s + (l.current_value ?? 0), 0)
+}
+
 interface AllocationBarProps {
-  mfBalance: number
-  stockBalance: number
+  mfCostBasis: number
+  stockCostBasis: number
+  mfCurrentValue: number | null
+  stockCurrentValue: number | null
   fdBalance: number
 }
 
-function AllocationBar({ mfBalance, stockBalance, fdBalance }: AllocationBarProps) {
-  const total = mfBalance + stockBalance + fdBalance
-  if (total === 0) return null
+function AllocationBar({
+  mfCostBasis,
+  stockCostBasis,
+  mfCurrentValue,
+  stockCurrentValue,
+  fdBalance,
+}: AllocationBarProps) {
+  const mfDisplay = mfCurrentValue ?? mfCostBasis
+  const stockDisplay = stockCurrentValue ?? stockCostBasis
+  const displayTotal = mfDisplay + stockDisplay + fdBalance
+  const hasFullLivePrices =
+    (mfCostBasis === 0 || mfCurrentValue !== null) &&
+    (stockCostBasis === 0 || stockCurrentValue !== null)
+  if (displayTotal === 0) return null
 
-  const pct = (v: number) => ((v / total) * 100).toFixed(1)
+  const pct = (v: number) => ((v / displayTotal) * 100).toFixed(1)
 
   const segments = [
-    { label: 'Equity MF', value: mfBalance, color: 'bg-blue-600', pctColor: 'text-blue-600' },
-    { label: 'Stocks', value: stockBalance, color: 'bg-violet-600', pctColor: 'text-violet-600' },
+    { label: 'Equity MF', value: mfDisplay, color: 'bg-blue-600', pctColor: 'text-blue-600' },
+    { label: 'Stocks', value: stockDisplay, color: 'bg-violet-600', pctColor: 'text-violet-600' },
     { label: 'Fixed Deposits', value: fdBalance, color: 'bg-amber-500', pctColor: 'text-amber-600' },
   ].filter(s => s.value > 0)
 
   return (
     <div className="mb-6">
-      <div className="flex items-baseline gap-3 mb-3">
-        <span className="text-2xl font-semibold text-zinc-900 font-mono">{rupees(total)}</span>
-        <span className="text-sm text-zinc-500">total invested</span>
+      <div className="flex items-baseline gap-3 mb-1">
+        <span className="text-2xl font-semibold text-zinc-900 font-mono">{rupees(displayTotal)}</span>
+        <span className="text-sm text-zinc-500">
+          {hasFullLivePrices ? 'current value' : 'cost basis'}
+        </span>
       </div>
+      <p className="text-xs text-zinc-400 mb-3">
+        All open holdings — not limited to the active financial year.
+      </p>
       <div className="flex h-1.5 rounded-full overflow-hidden gap-0.5 mb-3">
         {segments.map(s => (
           <div
             key={s.label}
             className={`${s.color} rounded-full`}
-            style={{ width: `${(s.value / total) * 100}%` }}
+            style={{ width: `${(s.value / displayTotal) * 100}%` }}
           />
         ))}
       </div>
@@ -199,11 +237,6 @@ function AllocationBar({ mfBalance, stockBalance, fdBalance }: AllocationBarProp
 }
 
 // ── Holdings table (Equity MF + Stocks) ──────────────────────────────────────
-
-interface AccountWithPortfolio {
-  account: AccountOut
-  lots: PortfolioItemOut[]
-}
 
 interface HoldingsTableProps {
   items: AccountWithPortfolio[]
@@ -569,11 +602,6 @@ export default function Portfolio() {
 
   const mfAccounts = accounts.filter(a => a.investment_subtype === 'equity_mf')
   const stockAccounts = accounts.filter(a => a.investment_subtype === 'stock')
-  const fdAccounts = accounts.filter(a => a.investment_subtype === 'fd')
-
-  const mfBalance = mfAccounts.reduce((s, a) => s + a.balance, 0)
-  const stockBalance = stockAccounts.reduce((s, a) => s + a.balance, 0)
-  const fdBalance = fdAccounts.reduce((s, a) => s + a.balance, 0)
 
   // Portfolio per account — refresh live prices, then load holdings
   const priceableAccountKey = (accs: AccountOut[]) =>
@@ -590,7 +618,7 @@ export default function Portfolio() {
       )
       return mfAccounts.map((a, i) => ({ account: a, lots: results[i] }))
     },
-    enabled: tab === 'mf' && mfAccounts.length > 0,
+    enabled: mfAccounts.length > 0,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -605,15 +633,22 @@ export default function Portfolio() {
       )
       return stockAccounts.map((a, i) => ({ account: a, lots: results[i] }))
     },
-    enabled: tab === 'stocks' && stockAccounts.length > 0,
+    enabled: stockAccounts.length > 0,
     staleTime: 5 * 60 * 1000,
   })
 
   const { data: fds = [], isLoading: fdsLoading } = useQuery<FdListItemOut[]>({
     queryKey: queryKeys.investments.fds(),
     queryFn: () => api.get<FdListItemOut[]>('/investments/fds'),
-    enabled: tab === 'fds',
   })
+
+  const mfCostBasis = sumHoldingsCostBasis(mfPortfolios)
+  const stockCostBasis = sumHoldingsCostBasis(stockPortfolios)
+  const mfCurrentValue = sumHoldingsCurrentValue(mfPortfolios)
+  const stockCurrentValue = sumHoldingsCurrentValue(stockPortfolios)
+  const fdBalance = fds
+    .filter(f => f.status === 'active')
+    .reduce((s, f) => s + f.principal + f.accrued_interest, 0)
 
   const openBuySheet = (subtype: 'equity_mf' | 'stock', account?: AccountOut) => {
     setTradeSheet({ mode: 'buy', subtype, account })
@@ -627,7 +662,13 @@ export default function Portfolio() {
     <div className="max-w-5xl mx-auto px-6 py-6">
       <h1 className="text-2xl font-semibold text-zinc-900 mb-6">Portfolio</h1>
 
-      <AllocationBar mfBalance={mfBalance} stockBalance={stockBalance} fdBalance={fdBalance} />
+      <AllocationBar
+        mfCostBasis={mfCostBasis}
+        stockCostBasis={stockCostBasis}
+        mfCurrentValue={mfCurrentValue}
+        stockCurrentValue={stockCurrentValue}
+        fdBalance={fdBalance}
+      />
 
       {/* Tab strip */}
       <div className="flex gap-6 border-b border-zinc-200 mb-6">

@@ -7,7 +7,8 @@ from pydantic_ai import Agent, RunContext
 from agent.activity import emit
 from agent.deps import StowDeps
 from agent.subagents.transaction import _get_active_fy, _list_accounts
-from agent.tool_errors import stow_get, stow_post, stow_put, tool_safe
+from agent.tool_errors import is_tool_error, stow_get, stow_post, stow_put, tool_safe
+from stow.import_pipeline import match_bank_account
 
 _INSTRUCTIONS = """\
 You are the import agent for an Indian personal finance system.
@@ -17,47 +18,51 @@ When any tool returns a string starting with "Error:", read the message, fix the
 retry, or ask the user one clarifying question.
 
 Workflow:
-1. Call review_staging(batch_id) to see all parsed rows.
-2. Auto-confirm every row where possible_duplicate=False by calling
-   update_staging_row(batch_id, row_id, status="confirmed") for each.
-3. For each row where possible_duplicate=True, show the user ONE AT A TIME:
+1. Call get_batch(batch_id) for row counts and detected_bank.
+2. Call review_staging(batch_id) to see all parsed rows.
+3. Auto-confirm ONLY rows where possible_duplicate=False AND suggested_account_id is set:
+     update_staging_row(batch_id, row_id, status="confirmed")
+   For rows without suggested_account_id, ask the user which account to use (ONE question
+   listing all unmapped descriptions), then update_staging_row with suggested_account_id
+   and status="confirmed".
+4. For each row where possible_duplicate=True, show the user ONE AT A TIME:
      "📋 {date} · {description} · ₹{amount/100:,.2f} — possible duplicate.
       Reply 'confirm anyway', 'skip', or 'view existing' (txn #{matched_transaction_id})."
    Wait for their reply before moving to the next duplicate.
-   - 'confirm anyway' → update_staging_row(batch_id, row_id, status="confirmed")
-   - 'skip' → update_staging_row(batch_id, row_id, status="discarded")
-4. Call list_accounts to let the user pick a bank account, then call get_active_fy.
-5. Call confirm_staging(batch_id, bank_account_id, fy_id).
-6. Report: "✅ {posted} transactions posted. {reconciled} reconciled. {skipped} skipped."
+5. Call match_bank_account(batch_id). If it returns null, call list_accounts and ask which
+   bank account this statement belongs to. Otherwise use the matched bank_account_id.
+6. Call get_active_fy for fy_id (active financial year — bank imports should be current FY).
+7. Call confirm_staging(batch_id, bank_account_id, fy_id).
+8. Report using confirm_staging response fields:
+     posted_count, skipped_count, and any skipped reasons.
 
 Rules:
 - Display amounts as ₹X,XX,XXX (Indian comma format).
 - Display dates as DD Mon YYYY.
-- Never call confirm_staging without first having both bank_account_id and fy_id confirmed.
+- Never call confirm_staging without bank_account_id and fy_id.
+- Never confirm rows without suggested_account_id — they cannot post correctly.
+- Rows dated outside the active FY or in a locked FY will be skipped at post time; warn the user.
 """
 
 
-@tool_safe("import_statement")
-async def _import_statement(
-    ctx: RunContext[StowDeps],
-    pdf_bytes_b64: str,
-    filename: str,
-) -> dict | str:
-    """Upload a bank statement PDF and parse it into a staging batch.
+@tool_safe("match_bank_account")
+async def _match_bank_account(ctx: RunContext[StowDeps], batch_id: int) -> dict | None | str:
+    """Match the batch detected_bank field to a ledger bank account.
 
     Args:
-        pdf_bytes_b64: Base64-encoded PDF file bytes
-        filename: Original filename (must end in .pdf)
+        batch_id: Import batch ID
     """
-    import base64
-
-    pdf_bytes = base64.b64decode(pdf_bytes_b64)
-    return await stow_post(
-        ctx.deps,
-        "/imports",
-        tool_name="import_statement",
-        files={"file": (filename, pdf_bytes, "application/pdf")},
-    )
+    await emit("Matching bank account")
+    batch = await stow_get(ctx.deps, f"/imports/{batch_id}", tool_name="match_bank_account")
+    if is_tool_error(batch):
+        return batch
+    accounts = await stow_get(ctx.deps, "/accounts", tool_name="match_bank_account")
+    if is_tool_error(accounts):
+        return accounts
+    matched = match_bank_account(accounts, batch.get("detected_bank"))
+    if matched is None:
+        return None
+    return {"id": matched["id"], "name": matched["name"], "detected_bank": batch.get("detected_bank")}
 
 
 @tool_safe("review_staging")
@@ -187,6 +192,7 @@ def build_import_agent(model: Any) -> Agent[StowDeps, str]:
         tools=[
             _get_active_fy,
             _list_accounts,
+            _match_bank_account,
             _review_staging,
             _confirm_staging,
             _match_staging_row,

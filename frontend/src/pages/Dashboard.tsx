@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, Link } from 'react-router-dom'
 import { ChevronDown, Plus, Bell, Clock, Repeat, Receipt } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
+import { refreshAllLivePrices } from '../api/prices'
 import { MonoAmount } from '../components/MonoAmount'
 import { TxnBadge, type TxnType } from '../components/TxnBadge'
 import { EmptyState } from '../components/EmptyState'
@@ -27,6 +28,14 @@ interface AccountOut {
   nature: string
   is_archived: boolean
   balance: number
+  investment_subtype?: string | null
+  price_source_id?: string | null
+}
+
+interface PortfolioItemOut {
+  remaining_units: number
+  current_value: number | null
+  cost_basis: number
 }
 
 interface EntryOut {
@@ -91,6 +100,23 @@ function computeNetWorth(accounts: AccountOut[]): number {
   return accounts
     .filter(a => a.nature === 'asset' || a.nature === 'liability')
     .reduce((sum, a) => sum + a.balance, 0)
+}
+
+function applyInvestmentMarketValues(
+  accounts: AccountOut[],
+  portfolioById: Record<number, PortfolioItemOut[]>,
+): AccountOut[] {
+  return accounts.map(account => {
+    const subtype = account.investment_subtype
+    if (subtype !== 'equity_mf' && subtype !== 'stock') return account
+    const lots = (portfolioById[account.id] ?? []).filter(l => l.remaining_units > 0)
+    if (lots.length === 0) return account
+    const hasLive = lots.every(l => l.current_value !== null)
+    const balance = hasLive
+      ? lots.reduce((sum, l) => sum + (l.current_value ?? 0), 0)
+      : lots.reduce((sum, l) => sum + l.cost_basis, 0)
+    return { ...account, balance }
+  })
 }
 
 function computeCash(accounts: AccountOut[]): { amount: number; count: number } {
@@ -408,10 +434,35 @@ export default function Dashboard() {
   })
   const activeFy = fys.find(fy => fy.status === 'active')
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: queryKeys.accounts.list(),
-    queryFn: () => api.get<AccountOut[]>('/accounts'),
+  const { data: positionAccounts = [] } = useQuery({
+    queryKey: queryKeys.accounts.list('position'),
+    queryFn: () => api.get<AccountOut[]>('/accounts?scope=position'),
+    staleTime: 30_000,
   })
+
+  const investmentAccounts = positionAccounts.filter(
+    a => a.investment_subtype === 'equity_mf' || a.investment_subtype === 'stock',
+  )
+
+  const { data: portfolioById = {} } = useQuery({
+    queryKey: ['dashboard', 'portfolios', investmentAccounts.map(a => a.id)],
+    queryFn: async () => {
+      if (investmentAccounts.some(a => a.price_source_id)) {
+        await refreshAllLivePrices()
+      }
+      const pairs = await Promise.all(
+        investmentAccounts.map(async account => {
+          const lots = await api.get<PortfolioItemOut[]>(`/investments/${account.id}/portfolio`)
+          return [account.id, lots] as const
+        }),
+      )
+      return Object.fromEntries(pairs) as Record<number, PortfolioItemOut[]>
+    },
+    enabled: investmentAccounts.length > 0,
+    staleTime: 30_000,
+  })
+
+  const netWorthAccounts = applyInvestmentMarketValues(positionAccounts, portfolioById)
 
   const { data: transactions = [] } = useQuery({
     queryKey: queryKeys.transactions.list(),
@@ -429,9 +480,9 @@ export default function Dashboard() {
   })
 
   // Computed
-  const netWorth = computeNetWorth(accounts)
-  const { amount: cashAmount, count: bankCount } = computeCash(accounts)
-  const gstNet = computeGstNet(accounts)
+  const netWorth = computeNetWorth(netWorthAccounts)
+  const { amount: cashAmount, count: bankCount } = computeCash(netWorthAccounts)
+  const gstNet = computeGstNet(netWorthAccounts)
 
   const recentTxns = [...transactions]
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -481,6 +532,7 @@ export default function Dashboard() {
         <div>
           <p className="text-xs text-zinc-400">Net worth</p>
           <MonoAmount amount={netWorth} colored={false} className="text-lg font-bold text-zinc-900" />
+          <p className="text-[10px] text-zinc-400 mt-0.5">All-time position · investments at market value</p>
         </div>
         <div className="text-right">
           <p className="text-xs text-zinc-400">
@@ -497,6 +549,8 @@ export default function Dashboard() {
         onSaved={() => {
           qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
           qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+          qc.invalidateQueries({ queryKey: queryKeys.accounts.list('position') })
+          qc.invalidateQueries({ queryKey: ['dashboard', 'portfolios'] })
         }}
       />
     </div>

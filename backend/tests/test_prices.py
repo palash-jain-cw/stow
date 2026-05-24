@@ -1,52 +1,54 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from tests.helpers import get_or_create_account, get_or_create_fy, get_or_create_group
 
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture()
 def invest_group(client):
-    return client.post("/account-groups", json={
-        "name": "Investments", "nature": "asset", "cash_flow_tag": "investing",
-    }).json()
+    return get_or_create_group(
+        client, "Prices Investments", "asset", cash_flow_tag="investing",
+    )
 
 
 @pytest.fixture()
 def bank(client):
-    grp = client.post("/account-groups", json={
-        "name": "Bank", "nature": "asset", "cash_flow_tag": "operating",
-    }).json()
-    return client.post("/accounts", json={"name": "HDFC Bank", "group_id": grp["id"]}).json()
+    get_or_create_group(client, "Prices Bank", "asset", cash_flow_tag="operating")
+    return get_or_create_account(client, "Prices HDFC Bank", "Prices Bank")
 
 
 @pytest.fixture()
 def fy(client):
-    return client.post("/financial-years", json={
-        "start_date": "2025-04-01", "end_date": "2026-03-31",
-    }).json()
+    return get_or_create_fy(client, "2025-04-01", "2026-03-31")
 
 
 @pytest.fixture()
 def mf_account(client, invest_group):
-    return client.post("/accounts", json={
-        "name": "PPFAS Flexi Cap Fund",
-        "group_id": invest_group["id"],
-        "investment_subtype": "equity_mf",
-        "price_source_id": "122639",
-    }).json()
+    return get_or_create_account(
+        client,
+        "Prices PPFAS Flexi Cap Fund",
+        "Prices Investments",
+        investment_subtype="equity_mf",
+        price_source_id="122639",
+    )
 
 
 @pytest.fixture()
 def stock_account(client, invest_group):
-    return client.post("/accounts", json={
-        "name": "Reliance Industries",
-        "group_id": invest_group["id"],
-        "investment_subtype": "stock",
-        "price_source_id": "RELIANCE",
-    }).json()
+    return get_or_create_account(
+        client,
+        "Prices Reliance Industries",
+        "Prices Investments",
+        investment_subtype="stock",
+        price_source_id="RELIANCE",
+    )
 
 
 # ── Slice 1: GET /prices/latest returns 404 when no quote exists ──────────────
@@ -199,36 +201,16 @@ def test_fetch_all_skips_accounts_without_source(client, invest_group, mf_accoun
 
 # ── Slice 6: GET /investments/{id}/portfolio with current value ───────────────
 
-def test_portfolio_includes_current_value_and_unrealized_gain(client, fy, bank, mf_account):
-    # Buy 10 units at ₹100/unit (100 paise/unit stored as cost_per_unit)
-    client.post(f"/investments/{mf_account['id']}/buy", json={
-        "fy_id": fy["id"],
-        "date": "2025-05-01",
-        "units": 10_000,        # milliunits
-        "cost_per_unit": 100,   # paise per unit
-        "bank_account_id": bank["id"],
-        "narration": "SIP",
-    })
-
-    with patch(
-        "stow.investments.prices.MfapiConnector.fetch",
-        new=AsyncMock(return_value=120),  # ₹1.20/unit
-    ):
-        client.post(f"/prices/fetch/{mf_account['id']}")
-
-    resp = client.get(f"/investments/{mf_account['id']}/portfolio")
-    assert resp.status_code == 200
-    items = resp.json()
-    assert len(items) == 1
-    item = items[0]
-    assert item["cost_basis"] == 1000        # 10_000 * 100 / 1000 paise
-    assert item["current_value"] == 1200     # 10_000 * 120 / 1000 paise
-    assert item["unrealized_gain"] == 200    # 1200 - 1000
-    assert item["current_price_per_unit"] == 120
-
-
-def test_portfolio_omits_current_value_when_no_quote(client, fy, bank, mf_account):
-    client.post(f"/investments/{mf_account['id']}/buy", json={
+def test_portfolio_includes_current_value_and_unrealized_gain(client, fy, bank, invest_group):
+    tag = uuid.uuid4().hex[:8]
+    mf = get_or_create_account(
+        client,
+        f"Prices MF valued {tag}",
+        "Prices Investments",
+        investment_subtype="equity_mf",
+        price_source_id="122639",
+    )
+    client.post(f"/investments/{mf['id']}/buy", json={
         "fy_id": fy["id"],
         "date": "2025-05-01",
         "units": 10_000,
@@ -237,9 +219,38 @@ def test_portfolio_omits_current_value_when_no_quote(client, fy, bank, mf_accoun
         "narration": "SIP",
     })
 
-    resp = client.get(f"/investments/{mf_account['id']}/portfolio")
-    assert resp.status_code == 200
-    item = resp.json()[0]
+    with patch(
+        "stow.investments.prices.MfapiConnector.fetch",
+        new=AsyncMock(return_value=120),
+    ):
+        client.post(f"/prices/fetch/{mf['id']}")
+
+    item = client.get(f"/investments/{mf['id']}/portfolio").json()[0]
+    assert item["cost_basis"] == 1000
+    assert item["current_value"] == 1200
+    assert item["unrealized_gain"] == 200
+    assert item["current_price_per_unit"] == 120
+
+
+def test_portfolio_omits_current_value_when_no_quote(client, fy, bank, invest_group):
+    tag = uuid.uuid4().hex[:8]
+    mf = get_or_create_account(
+        client,
+        f"Prices MF no quote {tag}",
+        "Prices Investments",
+        investment_subtype="equity_mf",
+        price_source_id=f"NOQUOTE{tag}",
+    )
+    client.post(f"/investments/{mf['id']}/buy", json={
+        "fy_id": fy["id"],
+        "date": "2025-05-01",
+        "units": 10_000,
+        "cost_per_unit": 100,
+        "bank_account_id": bank["id"],
+        "narration": "SIP",
+    })
+
+    item = client.get(f"/investments/{mf['id']}/portfolio").json()[0]
     assert item["current_price_per_unit"] is None
     assert item["current_value"] is None
     assert item["unrealized_gain"] is None

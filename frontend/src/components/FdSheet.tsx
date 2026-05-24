@@ -10,11 +10,14 @@ import {
   rupeesToPaise,
   type AccountOption,
 } from './investmentHelpers'
+import { formatFyLabel, resolveFyForDate } from './fyHelpers'
 import { MonoAmount } from './MonoAmount'
 
 interface FinancialYear {
   id: number
   status: string
+  start_date: string
+  end_date: string
 }
 
 export interface FdListItem {
@@ -107,12 +110,12 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
   })
 
   const activeFy = resolveActiveFy(fys)
+  const resolvedFy = resolveFyForDate(fys, date)
   const bankAccounts = bankAccountsForSelect(accounts)
 
   const maturityPreview = fd ? fd.principal + fd.accrued_interest : 0
 
   const canSubmitOpen =
-    !!activeFy &&
     name.trim() !== '' &&
     rupeesToPaise(principalRupees) > 0 &&
     parseFloat(interestRate) > 0 &&
@@ -121,14 +124,12 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
     fromAccountId !== ''
 
   const canSubmitMature =
-    !!activeFy && !!fd && toAccountId !== '' && date !== ''
+    !!fd && toAccountId !== '' && date !== ''
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!activeFy) throw new Error('No active financial year. Please create one in Settings.')
-
       if (mode === 'open') {
-        return api.post('/investments/fds', {
+        const body: Record<string, unknown> = {
           name: name.trim(),
           principal: rupeesToPaise(principalRupees),
           interest_rate: Math.round(parseFloat(interestRate) * 100),
@@ -136,19 +137,21 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
           maturity_date: maturityDate,
           compounding,
           from_account_id: fromAccountId,
-          fy_id: activeFy.id,
           date,
           narration: narration.trim(),
-        })
+        }
+        if (resolvedFy) body.fy_id = resolvedFy.id
+        return api.post('/investments/fds', body)
       }
 
       if (!fd) throw new Error('No FD selected.')
-      return api.post<FdMatureOut>(`/investments/fds/${fd.account_id}/mature`, {
+      const body: Record<string, unknown> = {
         to_account_id: toAccountId,
-        fy_id: activeFy.id,
         date,
         narration: narration.trim(),
-      })
+      }
+      if (resolvedFy) body.fy_id = resolvedFy.id
+      return api.post<FdMatureOut>(`/investments/fds/${fd.account_id}/mature`, body)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
@@ -162,10 +165,17 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <div className="space-y-5">
-        {!activeFy && (
+        {resolvedFy ? (
+          resolvedFy.id !== activeFy?.id && (
+            <div className="flex items-start gap-2 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Posting to FY {formatFyLabel(resolvedFy)} (from transaction date)</span>
+            </div>
+          )
+        ) : (
           <div className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>No active financial year. Create one in Settings first.</span>
+            <span>No FY covers this date — a new year will be created when you save.</span>
           </div>
         )}
 

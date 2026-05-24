@@ -1,14 +1,13 @@
 import pytest
 
+from tests.helpers import get_or_create_account, get_or_create_fy
+
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 @pytest.fixture()
 def fy(client):
-    return client.post("/financial-years", json={
-        "start_date": "2025-04-01",
-        "end_date": "2026-03-31",
-    }).json()
+    return get_or_create_fy(client, "2025-04-01", "2026-03-31")
 
 
 @pytest.fixture()
@@ -24,7 +23,7 @@ def accum_depr_group(client):
 @pytest.fixture()
 def bank(client):
     grp = next(g for g in client.get("/account-groups").json() if g["name"] == "Bank Accounts")
-    return client.post("/accounts", json={"name": "Test Bank", "group_id": grp["id"]}).json()
+    return get_or_create_account(client, "Depreciation Test Bank", "Bank Accounts")
 
 
 def make_asset(client, fixed_assets_group, accum_depr_group, name="Laptop", rate=0.15):

@@ -156,8 +156,11 @@ Pass all extracted details to transaction_agent as structured input.
 ## Bank statement import
 When you see a prompt starting with [IMPORT_BATCH:{id}:{filename}]:
 - Extract the batch id (integer after the first colon).
-- Delegate to import_agent with: "Batch id is {id}. Please review and confirm the import."
-- Do NOT ask the user anything first — import_agent will ask for the bank account.
+- Delegate IMMEDIATELY to import_agent with:
+  "Batch id is {id}. Review staging, map any unmapped rows, match the bank account,
+   and post confirmed rows to the active financial year."
+- import_agent handles bank account selection (via match_bank_account) and duplicate review.
+- Do NOT ask the user anything before delegating unless PDF upload failed.
 
 ## Subagent routing
 - Transaction entry / queries → transaction_agent

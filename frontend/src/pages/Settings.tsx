@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, Loader2, Pencil, Trash2 } from 'lucide-react'
@@ -24,6 +24,12 @@ interface AccountOut {
   is_archived: boolean
   investment_subtype: string | null
   balance: number
+}
+
+interface OpeningBalance {
+  account_id: number
+  fy_id: number
+  amount: number
 }
 
 interface ScheduleOut {
@@ -97,6 +103,13 @@ function rupees(paise: number) {
   }).format(Math.round(paise) / 100)
 }
 
+/** Convert stored OB paise to rupees for the edit form (liabilities/equity stored as negative). */
+function obAmountToInputValue(amount: number, nature: string): string {
+  if (amount === 0) return ''
+  const paise = nature === 'liability' || nature === 'equity' ? Math.abs(amount) : amount
+  return String(paise / 100)
+}
+
 const FREQ_COLORS: Record<string, string> = {
   daily: 'bg-blue-100 text-blue-700',
   weekly: 'bg-violet-100 text-violet-700',
@@ -149,6 +162,20 @@ function FinancialYearsPanel() {
   const [showNewFy, setShowNewFy] = useState(false)
   const [openingBalancesFy, setOpeningBalancesFy] = useState<FinancialYear | null>(null)
   const [lockFy, setLockFy] = useState<FinancialYear | null>(null)
+  const [repairPreview, setRepairPreview] = useState<{
+    moved: number
+    dry_run: boolean
+    skipped_locked: { txn_id: number; reason: string }[]
+    fys_created: { fy_id: number; start_date: string; end_date: string; txn_count?: number }[]
+    move_buckets?: {
+      start_date: string
+      end_date: string
+      txn_count: number
+      will_create: boolean
+    }[]
+  } | null>(null)
+  const [repairRunning, setRepairRunning] = useState(false)
+  const [repairError, setRepairError] = useState<string | null>(null)
 
   const { data: fys = [] } = useQuery<FinancialYear[]>({
     queryKey: queryKeys.financialYears.all(),
@@ -172,6 +199,36 @@ function FinancialYearsPanel() {
     await api.post('/financial-years', { start_date: nextStart, end_date: nextEnd, status: 'open' })
     qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
     setShowNewFy(false)
+  }
+
+  const previewRepair = async () => {
+    setRepairRunning(true)
+    setRepairError(null)
+    try {
+      const result = await api.post<NonNullable<typeof repairPreview>>(
+        '/financial-years/repair-assignments?dry_run=true',
+      )
+      setRepairPreview(result)
+    } catch (e) {
+      setRepairError(e instanceof Error ? e.message : 'Repair preview failed')
+    } finally {
+      setRepairRunning(false)
+    }
+  }
+
+  const runRepair = async () => {
+    setRepairRunning(true)
+    setRepairError(null)
+    try {
+      await api.post('/financial-years/repair-assignments?dry_run=false')
+      await qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
+      await qc.invalidateQueries({ queryKey: queryKeys.transactions.list() })
+      setRepairPreview(null)
+    } catch (e) {
+      setRepairError(e instanceof Error ? e.message : 'Repair failed')
+    } finally {
+      setRepairRunning(false)
+    }
   }
 
   return (
@@ -209,7 +266,7 @@ function FinancialYearsPanel() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {fy.status === 'active' && (
+              {fy.status !== 'locked' && (
                 <>
                   <button
                     onClick={() => setOpeningBalancesFy(fy)}
@@ -244,6 +301,63 @@ function FinancialYearsPanel() {
       <div className="mt-4 p-4 bg-zinc-50 rounded-xl text-xs text-zinc-500 leading-relaxed">
         <strong>Year-end closing.</strong> When you lock a year, net profit is automatically transferred to Reserves &amp; Surplus.
         Depreciation entries should be posted before locking — the system will warn if any fixed assets have unposted depreciation.
+      </div>
+
+      <div className="mt-4 p-4 border border-zinc-200 rounded-xl">
+        <h3 className="text-sm font-semibold text-zinc-900">Repair FY assignments</h3>
+        <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+          One-time fix for transactions whose date falls outside their assigned financial year.
+          Locked years are never modified.
+        </p>
+        {repairPreview && (
+          <div className="mt-3 text-xs text-zinc-600 bg-zinc-50 rounded-lg px-3 py-2 space-y-2">
+            <p>
+              <strong>{repairPreview.moved}</strong> transaction(s) will move out of their
+              current FY into the year matching each transaction date.
+            </p>
+            {repairPreview.fys_created.length > 0 && (
+              <p>
+                <strong>{repairPreview.fys_created.length}</strong> new FY(s) will be created
+                (not one per transaction).
+              </p>
+            )}
+            {repairPreview.move_buckets && repairPreview.move_buckets.length > 0 && (
+              <ul className="space-y-1 pl-3 border-l-2 border-zinc-200">
+                {repairPreview.move_buckets.map(bucket => (
+                  <li key={`${bucket.start_date}-${bucket.end_date}`}>
+                    FY {bucket.start_date.slice(0, 4)}–{bucket.end_date.slice(2, 4)}:{' '}
+                    {bucket.txn_count} txn{bucket.txn_count === 1 ? '' : 's'}
+                    {bucket.will_create ? ' · will create' : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {repairPreview.skipped_locked.length > 0 && (
+              <p><strong>{repairPreview.skipped_locked.length}</strong> skipped (locked).</p>
+            )}
+          </div>
+        )}
+        {repairError && (
+          <p className="mt-2 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{repairError}</p>
+        )}
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={previewRepair}
+            disabled={repairRunning}
+            className="px-3 py-1.5 text-xs border border-zinc-200 rounded-lg text-zinc-600 hover:bg-zinc-50 disabled:opacity-40"
+          >
+            {repairRunning ? 'Running…' : 'Preview repair'}
+          </button>
+          {repairPreview && repairPreview.moved > 0 && (
+            <button
+              onClick={runRepair}
+              disabled={repairRunning}
+              className="px-3 py-1.5 text-xs bg-zinc-900 text-white rounded-lg hover:bg-zinc-700 disabled:opacity-40"
+            >
+              Run repair
+            </button>
+          )}
+        </div>
       </div>
 
       {/* New FY modal */}
@@ -288,6 +402,24 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
   })
 
   const obAccounts = accounts.filter(a => !a.is_archived && ['asset', 'liability', 'equity'].includes(a.nature))
+  const obAccountIds = useMemo(
+    () => obAccounts.map(a => a.id).sort((a, b) => a - b).join(','),
+    [accounts],
+  )
+
+  const { data: existingOb = {}, isLoading: loadingOb } = useQuery<Record<number, string>>({
+    queryKey: ['opening-balances', fy.id, obAccountIds],
+    queryFn: async () => {
+      const results = await Promise.all(
+        obAccounts.map(async a => {
+          const ob = await api.get<OpeningBalance>(`/accounts/${a.id}/opening-balance?fy_id=${fy.id}`)
+          return [a.id, obAmountToInputValue(ob.amount, a.nature)] as const
+        }),
+      )
+      return Object.fromEntries(results)
+    },
+    enabled: obAccounts.length > 0,
+  })
 
   // Group by group_name
   const groups = obAccounts.reduce<Record<string, AccountOut[]>>((acc, a) => {
@@ -296,12 +428,18 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
     return acc
   }, {})
 
-  const [values, setValues] = useState<Record<number, string>>({})
+  const [edits, setEdits] = useState<Record<number, string>>({})
 
-  const setValue = (id: number, v: string) => setValues(prev => ({ ...prev, [id]: v }))
+  useEffect(() => {
+    setEdits({})
+  }, [fy.id])
+
+  const displayValue = (id: number) => edits[id] ?? existingOb[id] ?? ''
+
+  const setValue = (id: number, v: string) => setEdits(prev => ({ ...prev, [id]: v }))
 
   const paiseFor = (id: number, nature: string) => {
-    const v = parseFloat(values[id] ?? '0')
+    const v = parseFloat(displayValue(id) || '0')
     if (isNaN(v)) return 0
     const raw = Math.round(v * 100)
     return nature === 'liability' || nature === 'equity' ? -raw : raw
@@ -315,10 +453,14 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
 
   const save = async () => {
     const promises = obAccounts
-      .filter(a => values[a.id] !== undefined && values[a.id] !== '' && values[a.id] !== '0')
+      .filter(a => {
+        const v = displayValue(a.id)
+        return v !== '' && v !== '0'
+      })
       .map(a => api.put(`/accounts/${a.id}/opening-balance`, { fy_id: fy.id, amount: paiseFor(a.id, a.nature) }))
     await Promise.all(promises)
     qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
+    qc.invalidateQueries({ queryKey: ['opening-balances', fy.id] })
     onClose()
   }
 
@@ -328,6 +470,12 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
         Balances as at {formatDate(fy.start_date)}.
       </p>
 
+      {loadingOb ? (
+        <div className="flex items-center gap-2 text-sm text-zinc-500 py-8 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading balances…
+        </div>
+      ) : (
       <div className="space-y-4">
         {Object.entries(groups).map(([groupName, accs]) => (
           <div key={groupName}>
@@ -341,7 +489,7 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
                     type="number"
                     className="w-28 text-right border border-zinc-200 rounded-lg px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-zinc-300"
                     placeholder="0"
-                    value={values[a.id] ?? ''}
+                    value={displayValue(a.id)}
                     onChange={e => setValue(a.id, e.target.value)}
                   />
                 </div>
@@ -350,13 +498,16 @@ function OpeningBalancesModal({ fy, onClose }: { fy: FinancialYear; onClose: () 
           </div>
         ))}
       </div>
+      )}
 
+      {!loadingOb && (
       <div className={`mt-4 px-3 py-2 rounded-lg text-sm font-mono ${balanced ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
         Assets − Liabilities − Equity = {rupees(Math.abs(diff))}&nbsp;
         {balanced ? '· Balanced.' : `· Out of balance by ${rupees(Math.abs(diff))}`}
       </div>
+      )}
 
-      <ModalActions onCancel={onClose} onConfirm={save} confirmLabel="Save balances" />
+      <ModalActions onCancel={onClose} onConfirm={save} confirmLabel="Save balances" confirmDisabled={loadingOb} />
     </Modal>
   )
 }

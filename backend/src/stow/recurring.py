@@ -5,9 +5,11 @@ from datetime import date, timedelta
 
 from sqlmodel import Session, col, select
 
+from stow.fy_resolution import find_fy_for_date
 from stow.models import (
-    Entry, FinancialYear, RecurringQueueItem, RecurringSchedule, Transaction,
+    Entry, RecurringQueueItem, RecurringSchedule, Transaction,
 )
+from stow.transaction_numbers import next_transaction_number
 
 
 def _advance_next_due_date(schedule: RecurringSchedule) -> date:
@@ -70,33 +72,16 @@ def auto_post_pending(session: Session, today: date | None = None) -> list[Recur
     return posted
 
 
-def _find_fy(session: Session, txn_date: date) -> FinancialYear | None:
-    return session.exec(
-        select(FinancialYear)
-        .where(FinancialYear.start_date <= txn_date)
-        .where(FinancialYear.end_date >= txn_date)
-        .where(FinancialYear.status != "locked")
-    ).first()
-
-
 def _clone_transaction(session: Session, template_id: int, new_date: date,
                         narration: str | None = None) -> Transaction | None:
     template = session.get(Transaction, template_id)
     if not template:
         return None
-    fy = _find_fy(session, new_date)
+    fy = find_fy_for_date(session, new_date)
     if not fy:
         return None
 
-    existing = session.exec(
-        select(Transaction).where(
-            Transaction.fy_id == fy.id,
-            Transaction.type == template.type,
-        )
-    ).all()
-    seq = len(existing) + 1
-    abbr = {"payment": "PAY", "receipt": "REC", "journal": "JRN", "contra": "CTR"}[template.type]
-    number = f"{abbr}-{fy.start_date.year}-{seq:03d}"
+    number = next_transaction_number(session, fy, template.type)
 
     txn = Transaction(
         number=number,

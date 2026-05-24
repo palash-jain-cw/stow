@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 
 from stow.db import get_session
+from stow.fy_resolution import FyResolutionError, raise_http_from_fy_error, resolve_fy_for_posting
 from stow.investments.prices import PriceRepository
 from stow.investments.repository import LotRepository
 from stow.investments.schemas import (
@@ -12,21 +13,11 @@ from stow.investments.schemas import (
 )
 from stow.investments.fd import accrued_interest as _accrued_interest
 from stow.models import Account, Entry, FinancialYear, FdMetadata, Transaction
+from stow.transaction_numbers import next_transaction_number
 
 _VALID_COMPOUNDING = {"simple", "monthly", "quarterly", "yearly"}
 
 router = APIRouter(prefix="/investments", tags=["investments"])
-
-
-def _next_journal_number(session: Session, fy_id: int) -> str:
-    fy = session.get(FinancialYear, fy_id)
-    assert fy is not None
-    count = len(session.exec(
-        select(Transaction)
-        .where(col(Transaction.fy_id) == fy_id)
-        .where(col(Transaction.type) == "journal")
-    ).all())
-    return f"JRN-{fy.start_date.year}-{count + 1:03d}"
 
 
 @router.post("/fds", response_model=FdOut, status_code=201)
@@ -36,11 +27,10 @@ def create_fd(data: FdCreateIn, session: Session = Depends(get_session)):
     if data.compounding not in _VALID_COMPOUNDING:
         raise HTTPException(status_code=422, detail=f"compounding must be one of {sorted(_VALID_COMPOUNDING)}")
 
-    fy = session.get(FinancialYear, data.fy_id)
-    if fy is None:
-        raise HTTPException(status_code=404, detail="Financial year not found")
-    if fy.status == "locked":
-        raise HTTPException(status_code=403, detail="Cannot post to a locked financial year")
+    try:
+        fy, _ = resolve_fy_for_posting(session, data.date, data.fy_id)
+    except FyResolutionError as exc:
+        raise_http_from_fy_error(exc)
     if fy.status == "open":
         fy.status = "active"
 
@@ -64,11 +54,11 @@ def create_fd(data: FdCreateIn, session: Session = Depends(get_session)):
     session.add(fd)
 
     txn = Transaction(
-        number=_next_journal_number(session, data.fy_id),
+        number=next_transaction_number(session, fy, "journal"),
         type="journal",
         date=data.date,
         narration=data.narration,
-        fy_id=data.fy_id,
+        fy_id=fy.id,
     )
     session.add(txn)
     session.flush()
@@ -101,11 +91,10 @@ def mature_fd(account_id: int, data: FdMatureIn, session: Session = Depends(get_
     if fd.status != "active":
         raise HTTPException(status_code=409, detail=f"FD is already {fd.status}")
 
-    fy = session.get(FinancialYear, data.fy_id)
-    if fy is None:
-        raise HTTPException(status_code=404, detail="Financial year not found")
-    if fy.status == "locked":
-        raise HTTPException(status_code=403, detail="Cannot post to a locked financial year")
+    try:
+        fy, _ = resolve_fy_for_posting(session, data.date, data.fy_id)
+    except FyResolutionError as exc:
+        raise_http_from_fy_error(exc)
     if fy.status == "open":
         fy.status = "active"
 
@@ -130,11 +119,11 @@ def mature_fd(account_id: int, data: FdMatureIn, session: Session = Depends(get_
     assert interest_acc.id is not None
 
     txn = Transaction(
-        number=_next_journal_number(session, data.fy_id),
+        number=next_transaction_number(session, fy, "journal"),
         type="journal",
         date=data.date,
         narration=data.narration,
-        fy_id=data.fy_id,
+        fy_id=fy.id,
     )
     session.add(txn)
     session.flush()

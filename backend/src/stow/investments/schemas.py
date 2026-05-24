@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 
 class BuyIn(BaseModel):
-    fy_id: int
+    fy_id: int | None = None
     date: date
     units: int            # milliunits
     cost_per_unit: int    # paise per milliunit
@@ -14,7 +14,7 @@ class BuyIn(BaseModel):
 
 
 class SellIn(BaseModel):
-    fy_id: int
+    fy_id: int | None = None
     date: date
     units: int              # milliunits to sell
     price_per_unit: int     # paise per milliunit
@@ -95,7 +95,7 @@ class FdCreateIn(BaseModel):
     maturity_date: date
     compounding: str
     from_account_id: int   # bank / trading account to debit
-    fy_id: int
+    fy_id: int | None = None
     date: date             # transaction date (usually = start_date)
     narration: str = ""
 
@@ -114,7 +114,7 @@ class FdOut(BaseModel):
 
 class FdMatureIn(BaseModel):
     to_account_id: int     # bank / trading account to receive proceeds
-    fy_id: int
+    fy_id: int | None = None
     date: date
     narration: str = ""
 

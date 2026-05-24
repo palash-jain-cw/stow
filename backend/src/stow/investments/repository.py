@@ -4,6 +4,7 @@ from datetime import date
 
 from sqlmodel import Session, col, select
 
+from stow.fy_resolution import FyResolutionError, resolve_fy_for_posting
 from stow.models import (
     Account, CapitalGainEntry, CapitalGainsTaxRule,
     Entry, FinancialYear, Lot, Transaction,
@@ -11,6 +12,7 @@ from stow.models import (
 from stow.investments.schemas import (
     BuyIn, SellIn, LotOut, CapitalGainEntryOut, HoldingOut, CapitalGainsSummary,
 )
+from stow.transaction_numbers import next_transaction_number
 
 _ASSET_TYPE = {"equity_mf": "equity", "stock": "equity"}
 
@@ -37,12 +39,18 @@ class LotRepository:
             raise ValueError(f"No tax rule found for asset_type={asset_type} on {sale_date}")
         return rules
 
+    def _resolve_fy(self, txn_date: date, fy_id: int | None) -> FinancialYear:
+        try:
+            fy, _ = resolve_fy_for_posting(self._s, txn_date, fy_id)
+        except FyResolutionError as exc:
+            if exc.status_code == 403:
+                raise PermissionError(exc.detail) from exc
+            raise ValueError(exc.detail) from exc
+        assert fy.id is not None
+        return fy
+
     def buy(self, account_id: int, data: BuyIn) -> LotOut:
-        fy = self._s.get(FinancialYear, data.fy_id)
-        if fy is None:
-            raise ValueError(f"FinancialYear {data.fy_id} not found")
-        if fy.status == "locked":
-            raise PermissionError("Cannot post to a locked financial year")
+        fy = self._resolve_fy(data.date, data.fy_id)
 
         # Activate FY on first transaction
         if fy.status == "open":
@@ -51,11 +59,11 @@ class LotRepository:
         total_cost = data.units * data.cost_per_unit // 1000  # paise
 
         txn = Transaction(
-            number=self._next_number(data.fy_id, "JRN"),
+            number=next_transaction_number(self._s, fy, "journal"),
             type="journal",
             date=data.date,
             narration=data.narration,
-            fy_id=data.fy_id,
+            fy_id=fy.id,
         )
         self._s.add(txn)
         self._s.flush()
@@ -88,11 +96,7 @@ class LotRepository:
         )
 
     def sell(self, account_id: int, data: SellIn) -> list[CapitalGainEntryOut]:
-        fy = self._s.get(FinancialYear, data.fy_id)
-        if fy is None:
-            raise ValueError(f"FinancialYear {data.fy_id} not found")
-        if fy.status == "locked":
-            raise PermissionError("Cannot post to a locked financial year")
+        fy = self._resolve_fy(data.date, data.fy_id)
 
         acc = self._s.get(Account, account_id)
         if acc is None:
@@ -125,11 +129,11 @@ class LotRepository:
         total_proceeds = data.units * data.price_per_unit // 1000
 
         txn = Transaction(
-            number=self._next_number(data.fy_id, "JRN"),
+            number=next_transaction_number(self._s, fy, "journal"),
             type="journal",
             date=data.date,
             narration=data.narration,
-            fy_id=data.fy_id,
+            fy_id=fy.id,
         )
         self._s.add(txn)
         self._s.flush()
@@ -247,13 +251,3 @@ class LotRepository:
             total_loss=total_loss,
         )
 
-    def _next_number(self, fy_id: int, prefix: str) -> str:
-        fy = self._s.get(FinancialYear, fy_id)
-        assert fy is not None
-        year = fy.start_date.year
-        count = len(self._s.exec(
-            select(Transaction)
-            .where(col(Transaction.fy_id) == fy_id)
-            .where(col(Transaction.type) == "journal")
-        ).all())
-        return f"{prefix}-{year}-{count + 1:03d}"
