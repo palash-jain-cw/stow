@@ -85,17 +85,17 @@ _DEFAULT_MODEL = "Qwen3.6-35B-A3B-MLX-VL-oQ4-FP16"
 _DEFAULT_API_KEY = "omlx"
 
 # Local LLM harness — cap generation so a single run cannot fill the context window.
-# Override default cap with STOW_LLM_MAX_TOKENS (orchestrator / subagents via build_model).
+# Override default cap with STOW_LLM_MAX_TOKENS (roles via build_model).
 _ROLE_MAX_TOKENS: dict[str, int] = {
-    "default": 1024,
-    "orchestrator": 1024,
-    "agent": 1024,
-    "parse": 512,
+    "default": 2048,
+    "agent": 4096,
+    "parse": 1024,
     "import": 65536,
-    "ping": 256,
-    "report": 2048,
+    "ping": 512,
+    "report": 4096,
+    "tool_response": 2048,
 }
-_DEFAULT_TEMPERATURE = 0.2
+_DEFAULT_TEMPERATURE = 0.3
 
 
 def model_settings(role: str = "default", **overrides: Any) -> dict[str, Any]:
