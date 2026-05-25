@@ -14,6 +14,11 @@ For domain vocabulary, architecture, and design decisions, see [CONTEXT.md](CONT
 - Generate reports (Trial Balance, Balance Sheet, P&L, Cash Flow, Capital Gains) with PDF export
 - Import bank statement PDFs and review rows before posting
 - Chat with an AI assistant (web UI or optional Telegram bot) to create transactions, query balances, and manage investments
+- Process UPI payment screenshots — send a photo and the AI extracts merchant, amount, and account details
+
+### AI Architecture
+
+The AI assistant runs locally on your machine using any OpenAI-compatible inference server (oMLX, Ollama, LM Studio, vLLM). A single unified agent handles all intents — transaction entry, account management, bank imports, investments, recurring transactions, and financial reports — via ~40+ tools with a comprehensive domain prompt.
 
 ## Prerequisites
 
