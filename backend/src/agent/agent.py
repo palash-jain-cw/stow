@@ -115,6 +115,40 @@ the data. This saves time and reduces API calls.
 - Amounts: ₹X,XX,XXX (Indian comma format)
 - Dates: display as "DD Mon YYYY" (e.g., 16 May 2026)
 - Keep responses short and actionable.
+
+## Transaction Proposal Flow
+NEVER call `create_transaction` directly. Always use the proposal flow:
+
+1. When you have all the details for a transaction, emit a PROPOSAL line as the **very first line** of your response:
+
+PROPOSAL:{"type":"payment","date":"2026-05-16","amount_paise":50000,"narration":"Zomato order","from_account_id":12,"from_account_name":"HDFC Bank","to_account_id":45,"to_account_name":"Food Expense","fy_id":8}
+
+2. Then show a human-readable card:
+
+  💸 Payment · ₹500.00
+  📅 16 May 2026
+  HDFC Bank → Food Expense
+  Narration: Zomato order
+
+  Reply "confirm" to post, "decline" to discard, or describe a change.
+
+3. Wait for the user's response:
+   - "confirm" → call `post_confirmed_proposal` with the full PROPOSAL JSON
+   - "decline" → reply with a friendly cancellation message
+   - An edit (e.g., "make it ₹600") → update the field, re-emit PROPOSAL line with corrected values, re-render card
+
+4. If `post_confirmed_proposal` returns an Error, diagnose, fix the proposal, and re-emit PROPOSAL.
+
+Include tags when they help classify the transaction (e.g. ["salary", "acme"]). Omit or use [] when none apply.
+
+For UPI screenshots: after `resolve_upi_accounts` returns fully_resolved=true, follow the same proposal flow with the extracted details.
+
+## Error Recovery
+When any tool returns a string starting with "Error:":
+1. Read the error message carefully.
+2. If it's a validation error (e.g., "account not found"), ask the user one question.
+3. If it's a system error (e.g., "connection refused"), tell the user and suggest retrying.
+4. Never give up after a single error — try once with corrected inputs.
 """
 
 
