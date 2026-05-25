@@ -261,13 +261,30 @@ def _md_to_telegram(text: str) -> tuple[str, list]:
     code, tables, blockquotes, links, and special characters all work.
     Returns (plain_text, entities) suitable for message.answer(text=..., entities=...).
     """
+    from aiogram.types import MessageEntity
     from telegramify_markdown import convert
 
     # Strip PROPOSAL: lines (handled separately as keyboard)
     lines = [l for l in text.splitlines() if not l.startswith("PROPOSAL:")]
     text = "\n".join(lines)
 
-    return convert(text)
+    plain_text, raw_entities = convert(text)
+
+    # Convert telegramify-markdown entities to aiogram MessageEntity objects
+    entities = []
+    for raw in raw_entities:
+        entities.append(
+            MessageEntity(
+                type=raw.type,
+                offset=raw.offset,
+                length=raw.length,
+                url=raw.url,
+                language=raw.language,
+                custom_emoji_id=raw.custom_emoji_id,
+            )
+        )
+
+    return plain_text, entities
 
 
 async def _send_reply(message: Message, text: str, user_id: int) -> None:
