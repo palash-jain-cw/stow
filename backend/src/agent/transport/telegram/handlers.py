@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import traceback
 from typing import Callable
 
@@ -255,25 +254,20 @@ def register_handlers(dp: Dispatcher) -> None:
         await callback.answer()
 
 
-def _md_to_html(text: str) -> str:
-    """Convert LLM markdown output to Telegram-compatible HTML."""
-    import html
-    import markdown as _md
+def _md_to_telegram(text: str) -> tuple[str, list]:
+    """Convert LLM markdown output to Telegram-compatible text + entities.
+
+    Uses telegramify-markdown which handles LLM output well — bold, italic,
+    code, tables, blockquotes, links, and special characters all work.
+    Returns (plain_text, entities) suitable for message.answer(text=..., entities=...).
+    """
+    from telegramify_markdown import convert
 
     # Strip PROPOSAL: lines (handled separately as keyboard)
     lines = [l for l in text.splitlines() if not l.startswith("PROPOSAL:")]
     text = "\n".join(lines)
 
-    # Convert to HTML, then strip tags Telegram doesn't support
-    raw = _md.markdown(text, extensions=["fenced_code", "tables"])
-
-    # Telegram HTML supports: b, strong, i, em, u, s, code, pre, a, blockquote
-    # Strip unsupported tags (h1-h6 → b, others removed)
-    raw = re.sub(r"<h[1-6][^>]*>(.*?)</h[1-6]>", r"<b>\1</b>", raw, flags=re.S)
-    raw = re.sub(r"<(ul|ol|li|p|div|span|table|thead|tbody|tr|th|td)[^>]*>", "", raw)
-    raw = re.sub(r"</(ul|ol|li|p|div|span|table|thead|tbody|tr|th|td)>", "\n", raw)
-    raw = re.sub(r"\n{3,}", "\n\n", raw).strip()
-    return raw
+    return convert(text)
 
 
 async def _send_reply(message: Message, text: str, user_id: int) -> None:
@@ -282,7 +276,7 @@ async def _send_reply(message: Message, text: str, user_id: int) -> None:
 
     proposal, display = parse_proposal(text)
     body = display or text
-    html_body = _md_to_html(body)
+    plain_text, entities = _md_to_telegram(body)
     if proposal:
         try:
             normalize_proposal(proposal)
@@ -291,12 +285,12 @@ async def _send_reply(message: Message, text: str, user_id: int) -> None:
                 confirm_data=f"cfm:{proposal_id}",
                 decline_data=f"dec:{proposal_id}",
             )
-            await message.answer(html_body, reply_markup=keyboard, parse_mode="HTML")
+            await message.answer(plain_text, reply_markup=keyboard, entities=entities)  # type: ignore[arg-type]
         except ValueError:
             logger.warning("Skipping confirm buttons for invalid proposal: %s", proposal)
             await message.answer(
-                html_body + "\n\n⚠️ Proposal was incomplete — please describe the transaction again.",
-                parse_mode="HTML",
+                plain_text + "\n\n⚠️ Proposal was incomplete — please describe the transaction again.",
+                entities=entities,  # type: ignore[arg-type]
             )
     else:
-        await message.answer(html_body, parse_mode="HTML")
+        await message.answer(plain_text, entities=entities)  # type: ignore[arg-type]
