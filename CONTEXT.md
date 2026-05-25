@@ -178,45 +178,33 @@ All reports are generated server-side and exportable as PDF.
 ## AI Features
 
 ### Conversational Agent Architecture
-All user-facing AI interactions flow through a **multi-agent system** built with `pydantic_ai` and the `subagents_pydantic_ai` library:
+All user-facing AI interactions flow through a **single unified agent** built with `pydantic_ai`:
 
-- **Orchestrator** (`backend/src/agent/orchestrator.py`) - the top-level pydantic_ai agent. Receives all user messages (text, images, PDF references), classifies intent, and delegates to specialised subagents via `SubAgentCapability`.
-- **Subagents** (`backend/src/agent/subagents/`) - each is a focused pydantic_ai agent with its own tool set:
-
-| Subagent | Responsibility |
-|---|---|
-| `transaction` | NL → parse → proposal → create / query / edit / delete transactions |
-| `account` | Create / query / archive accounts |
-| `import_agent` | Bank statement staging row review and bulk confirmation |
-| `investment` | FD open/mature, equity MF/stock buy/sell, portfolio queries |
-| `recurring` | Create / confirm / skip recurring schedules |
-| `report` | P&L, balance sheet, cash flow, capital gains queries |
+- **Agent** (`backend/src/agent/agent.py`) - a single pydantic_ai agent with ~40+ tools and a comprehensive system prompt. Handles all user intents: transactions, accounts, imports, investments, recurring, reports, and UPI vision.
+- **Orchestrator** (`backend/src/agent/orchestrator.py`) - thin wrapper that builds the agent with shared dependencies (HTTP client, base URL). Re-exports `build_agent()` for backwards compatibility.
 
 ### Progress Events
 `backend/src/agent/activity.py` provides a ContextVar-based activity bus:
 - `emit(label: str)` puts a short label on a per-request `asyncio.Queue`
 - WebSocket transport drains the queue in parallel with the agent run, sending `{"type": "progress", "label": "..."}` JSON frames to the frontend
 - Frontend (ChatSidebar) shows the label next to the typing dots indicator
-- Telegram transport shows `send_chat_action("typing")` every 4 seconds while the agent runs
+- Telegram transport shows `send_chat_action("typing")` every 4 seconds while the agent runs (placeholder — tool-level status updates planned)
 
 ### Transport Layers
-- **WebSocket** (`backend/src/agent/transport/websocket.py`) - web chat. Creates a progress queue, sets the ContextVar, drains progress messages while the agent runs, then sends the final response. Handles text, images (`BinaryContent`), and PDF uploads. PDFs are pre-uploaded to `POST /imports`; orchestrator receives `[IMPORT_BATCH:{id}:{filename}]`.
-- **Telegram** (`backend/src/agent/transport/telegram/`) - same orchestrator, separate entry point. Handles photo messages as `BinaryContent` for vision, PDF documents as import batches. Converts LLM markdown output to Telegram-compatible HTML via `_md_to_html()`.
+- **WebSocket** (`backend/src/agent/transport/websocket.py`) - web chat. Creates a progress queue, sets the ContextVar, drains progress messages while the agent runs, then sends the final response. Handles text, images (`BinaryContent`), and PDF uploads. PDFs are pre-uploaded to `POST /imports`.
+- **Telegram** (`backend/src/agent/transport/telegram/`) - same agent, separate entry point. Handles photo messages as `BinaryContent` for vision, PDF documents as import batches. Converts LLM markdown output to Telegram-compatible entities via `telegramify-markdown`.
 
 ### Natural Language Transaction Entry
 1. User types a loose narrative: "paid electricity bill 2400 from HDFC last Tuesday"
-2. Orchestrator delegates to `transaction_agent`
-3. `transaction_agent` calls `parse_natural_language` → returns a proposal JSON (never auto-posts)
-4. Orchestrator emits a `PROPOSAL:` line + renders a human-readable card for the user
-5. On "confirm": orchestrator delegates `"confirm: <JSON>"` back to `transaction_agent` → `create_transaction`
-6. On "decline": friendly cancellation; on edit request: update fields and re-show card
-
-`transaction_agent` explicitly refuses investment buy/sell/FD requests - those must go to `investment_agent`.
+2. Agent calls `parse_natural_language` → returns a proposal JSON (never auto-posts)
+3. Agent emits a `PROPOSAL:` line + renders a human-readable card for the user
+4. On "confirm": agent calls `post_confirmed_proposal` with the full JSON
+5. On "decline": friendly cancellation; on edit request: update fields and re-show card
 
 ### Investment Operations (via agent)
-The orchestrator routes any mention of "buy", "mutual fund", "FD", "stock", "NAV", "units", "SIP", etc. directly to `investment_agent` (never to `transaction_agent`).
+The agent handles all investment operations directly — no subagent routing needed.
 
-`investment_agent` directly calls backend endpoints - no proposal card step:
+Investment operations execute directly without a proposal card step:
 - `create_fd` → `POST /investments/fds` - creates account + FdMetadata + balanced journal
 - `mature_fd` → `POST /investments/fds/{id}/mature`
 - `buy_investment` → `POST /investments/{id}/buy`
@@ -228,17 +216,17 @@ Parameter convention in agent tools:
 
 ### UPI Screenshot (Vision)
 - User sends a UPI payment screenshot via web chat or Telegram
-- Orchestrator passes `BinaryContent` to the LLM vision model (text prompt must come first in the list)
-- LLM extracts: merchant name, amount, reference number
-- `_get_merchant_rules` tool called to pre-fill payee account from saved merchant rules
+- Transport passes `BinaryContent` to the agent (text prompt first, then image bytes)
+- Agent extracts: merchant name, amount, date, source bank, UPI ID/reference
+- Agent calls `resolve_upi_accounts` + `_get_merchant_rules` to pre-fill payee and source accounts
 - Proposal card shown; user confirms to post
 
 ### Bank Statement PDF Import
 - Supported: PDF only (text extraction via pdfplumber/pymupdf → LLM parsing)
 - Supported banks: Axis Bank, HDFC, Bank of India, AU Small Finance Bank, Union Bank of India (bank and credit card statements)
 - User attaches PDF in web chat or Telegram → transport layer uploads to `POST /imports` → batch created with staging rows
-- Orchestrator receives `[IMPORT_BATCH:{id}:{filename}]` and delegates to `import_agent`
-- `import_agent` resolves bank account and FY using `_list_accounts` / `_get_active_fy` tools; guides user through row-by-row review
+- Agent receives `[IMPORT_BATCH:{id}:{filename}]` and guides user through row-by-row review
+- Agent resolves bank account and FY using `_list_accounts` / `_get_active_fy` tools
 - Merchant rules applied automatically; AI suggests accounts for unmapped rows
 - User confirms batch → `POST /imports/{id}/confirm` → bulk transaction creation
 
@@ -249,7 +237,7 @@ Parameter convention in agent tools:
 
 ### Markdown Rendering
 - Chat UI: agent responses rendered via `react-markdown` + `remark-gfm` with full component overrides (no prose classes); user messages stay `whitespace-pre-wrap`
-- Telegram: `_md_to_html()` converts LLM markdown → Telegram HTML using the `markdown` package + regex cleanup for unsupported tags
+- Telegram: `telegramify-markdown` converts LLM markdown → Telegram text + entities (bold, italic, code, tables as pre, blockquotes, links). No `parse_mode` needed — uses native `entities` array.
 
 ### Background Scheduler
 - APScheduler 4.x running in the FastAPI process, timezone: Asia/Kolkata (IST)
@@ -282,7 +270,7 @@ The Telegram bot provides natural-language accounting via the same backend. It c
 | Screenshots | `BinaryContent` passed to LLM vision - text prompt first, then image bytes |
 | Bank import | PDF uploaded to `/imports`, then `[IMPORT_BATCH:{id}:{filename}]` sent to orchestrator |
 | Typing indicator | `send_chat_action("typing")` every 4 s while agent runs |
-| Response format | Markdown → Telegram HTML via `_md_to_html()`; `parse_mode="HTML"` |
+| Response format | Markdown → Telegram entities via `telegramify-markdown`; uses native `entities` array |
 | Bot framework | `aiogram 3.x` - async-native, integrates with FastAPI ecosystem |
 | AI infrastructure | Reuses existing `pydantic_ai` orchestrator - same LLM provider, same config |
 
@@ -299,28 +287,35 @@ The Telegram bot provides natural-language accounting via the same backend. It c
 ```
 backend/src/
 ├── agent/
-│   ├── agent.py                   # Unified pydantic_ai agent (~40 tools, one comprehensive prompt)
+│   ├── agent.py                   # Unified pydantic_ai agent (~40+ tools, comprehensive prompt)
+│   ├── orchestrator.py            # Thin wrapper: builds agent with shared deps (re-exports build_agent)
 │   ├── deps.py                    # Shared dependency injection (HTTP client, base URL)
 │   ├── activity.py                # ContextVar-based progress event bus (emit())
+│   ├── tool_errors.py             # stow_get/stow_post wrappers with error handling
+│   ├── upi_matching.py            # resolve_upi_accounts for UPI screenshot account matching
 │   └── transport/
 │       ├── websocket.py           # Web chat - progress drain, image/PDF pre-upload
 │       ├── proposal.py            # Proposal card parser (shared across transports)
 │       └── telegram/
 │           ├── bot.py             # aiogram Bot instance + dispatcher setup
-│           ├── handlers.py        # All Telegram event handlers; _md_to_html(); _keep_typing()
+│           ├── handlers.py        # All Telegram event handlers; _md_to_telegram(); _keep_typing()
 │           └── keyboard.py        # Inline keyboard builders (Confirm/Decline)
 └── stow/
     ├── routers/                   # FastAPI route modules (one per domain)
     │   ├── transactions.py        # CRUD; cascades Lot/FdMetadata on delete
     │   ├── investments.py         # FD create/mature/list, buy, sell, holdings, portfolio
     │   ├── financial_years.py     # FY CRUD; overlap validation on create
+    │   ├── depreciation.py        # WDV depreciation summary
+    │   ├── merchant_rules.py      # Merchant rule CRUD
+    │   ├── imports.py             # PDF upload, staging rows, confirm
     │   └── ...
     ├── models.py                  # SQLModel ORM models
-    ├── ai_config.py               # LLM config load/save + normalize_base_url()
+    ├── ai_config.py               # LLM config load/save + normalize_base_url() + model_settings()
     ├── import_pipeline.py         # PDF parsing → staging rows
     ├── import_parsers.py          # Per-bank PDF parsers
     ├── recurring.py               # Queue generation logic
     ├── scheduler.py               # APScheduler job definitions
+    ├── migrations.py              # Alembic migration helpers
     ├── reports/                   # Report generation + PDF export
     └── investments/
         ├── schemas.py             # Pydantic models for buy/sell/FD/lot/portfolio
