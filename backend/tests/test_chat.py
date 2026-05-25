@@ -122,28 +122,29 @@ class TestWebSocketChat:
 
                 assert messages[-1]["type"] == "done"
 
-    def test_pdf_file_message_gets_response(self, client):
-        """Base64-encoded PDF is accepted and the orchestrator responds."""
+    def test_pdf_file_message_directs_to_import_page(self, client):
+        """Web chat rejects PDF uploads and points users to the Bank Import page."""
         pdf_bytes = b"%PDF-1.4 fake pdf content"
         b64 = base64.b64encode(pdf_bytes).decode()
 
-        with patch(_ORCH_PATCH, return_value=_test_orchestrator()):
-            with client.websocket_connect("/chat/ws") as ws:
-                ws.send_json({
-                    "type": "file",
-                    "content": b64,
-                    "mime_type": "application/pdf",
-                    "filename": "statement.pdf",
-                })
+        with client.websocket_connect("/chat/ws") as ws:
+            ws.send_json({
+                "type": "file",
+                "content": b64,
+                "mime_type": "application/pdf",
+                "filename": "statement.pdf",
+            })
 
-                messages = []
-                while True:
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg.get("type") == "done":
-                        break
+            messages = []
+            while True:
+                msg = ws.receive_json()
+                messages.append(msg)
+                if msg.get("type") == "done":
+                    break
 
-                assert messages[-1]["type"] == "done"
+            assert messages[-1]["type"] == "done"
+            body = "".join(m["content"] for m in messages if m.get("type") == "token")
+            assert "Bank Import" in body
 
 
 class TestUploadPdfToBatch:
@@ -181,33 +182,25 @@ class TestUploadPdfToBatch:
         assert isinstance(result, str)
         assert "sorry" in result.lower() or "couldn't" in result.lower()
 
-    def test_pdf_websocket_message_triggers_upload(self, client):
-        """WebSocket PDF message calls _upload_pdf_to_batch (not _build_prompt PDF path)."""
-        from unittest.mock import patch, AsyncMock
+    def test_pdf_websocket_message_does_not_call_upload(self, client):
+        """WebSocket PDF messages must not invoke _upload_pdf_to_batch."""
+        from unittest.mock import patch
 
         pdf_bytes = b"%PDF-1.4 fake"
         b64 = base64.b64encode(pdf_bytes).decode()
 
-        async def fake_upload(file_bytes, fname, http_client, base_url):
-            return "[IMPORT_BATCH:5:stmt.pdf] Statement parsed — 10 rows ready."
+        with patch("agent.transport.websocket._upload_pdf_to_batch") as mock_upload:
+            with client.websocket_connect("/chat/ws") as ws:
+                ws.send_json({
+                    "type": "file",
+                    "content": b64,
+                    "mime_type": "application/pdf",
+                    "filename": "stmt.pdf",
+                })
+                while ws.receive_json().get("type") != "done":
+                    pass
 
-        with patch(_ORCH_PATCH, return_value=_test_orchestrator()):
-            with patch("agent.transport.websocket._upload_pdf_to_batch", side_effect=fake_upload):
-                with client.websocket_connect("/chat/ws") as ws:
-                    ws.send_json({
-                        "type": "file",
-                        "content": b64,
-                        "mime_type": "application/pdf",
-                        "filename": "stmt.pdf",
-                    })
-                    messages = []
-                    while True:
-                        msg = ws.receive_json()
-                        messages.append(msg)
-                        if msg.get("type") == "done":
-                            break
-
-                    assert messages[-1]["type"] == "done"
+            mock_upload.assert_not_called()
 
 
 class TestBuildPrompt:
@@ -257,6 +250,30 @@ class TestBuildPrompt:
 
         result = _build_prompt({"type": "text", "content": "hello"})
         assert result == "hello"
+
+
+class TestImportChatHelpers:
+    def test_extract_import_batch_id(self):
+        from agent.transport.websocket import _extract_import_batch_id
+
+        assert _extract_import_batch_id("[IMPORT_BATCH:42:stmt.pdf] parsed") == 42
+        assert _extract_import_batch_id("hello") is None
+
+    def test_wrap_import_continuation(self):
+        from agent.transport.websocket import _wrap_import_continuation
+
+        wrapped = _wrap_import_continuation(7, "confirm anyway")
+        assert "[IMPORT_CONTINUATION:batch_id=7]" in wrapped
+        assert "confirm anyway" in wrapped
+
+    def test_strip_import_done(self):
+        from agent.transport.websocket import _strip_import_done
+
+        text = "IMPORT_DONE:9\n\nPosted 3 transactions."
+        cleaned, batch_id = _strip_import_done(text)
+        assert batch_id == 9
+        assert "IMPORT_DONE" not in cleaned
+        assert "Posted 3 transactions" in cleaned
 
 
 class TestWebSocketConfirmFlow:

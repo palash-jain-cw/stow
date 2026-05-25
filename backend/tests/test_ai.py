@@ -22,6 +22,12 @@ def test_model_settings_role_caps():
     orch_settings = ai_config_module.model_settings("orchestrator")
     assert orch_settings["max_tokens"] == 1024
 
+    ping_settings = ai_config_module.model_settings("ping")
+    assert ping_settings["max_tokens"] == 256
+
+    import_settings = ai_config_module.model_settings("import")
+    assert import_settings["max_tokens"] == 65536
+
 
 def test_build_model_applies_default_settings(monkeypatch):
     monkeypatch.setenv("STOW_LLM_BASE_URL", "http://127.0.0.1:8080/v1")

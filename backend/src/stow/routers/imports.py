@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import logging
+import traceback
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
-from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from sqlmodel import Session, select
 
-from stow.ai_agent import get_ai_agent
 from stow.db import get_session
-from stow.import_parsers import ParsedStatement, extract_pdf_text, parse_statement
-from stow.import_pipeline import detect_duplicates, confirm_batch, map_accounts
+from stow.import_parsers import ParsedStatement, get_import_parser_agent, parse_statement_pdf
+from stow.import_pipeline import detect_duplicates, confirm_batch, map_accounts, apply_single_rule_to_batch
 from stow.models import ImportBatch, StagingRow, Transaction, Entry, FinancialYear
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -60,15 +64,42 @@ class StagingRowOut(BaseModel):
 async def upload_statement(
     file: UploadFile,
     session: Session = Depends(get_session),
-    agent: Agent = Depends(get_ai_agent),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=422, detail="Only PDF files are supported")
 
     file_bytes = await file.read()
-    pdf_text = extract_pdf_text(file_bytes)
-
-    parsed: ParsedStatement = await parse_statement(agent, pdf_text)
+    try:
+        parsed: ParsedStatement = await parse_statement_pdf(
+            file_bytes,
+            first_page_agent=get_import_parser_agent(),
+        )
+    except ValueError as exc:
+        logger.warning("Import PDF rejected for %s: %s", file.filename, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnexpectedModelBehavior as exc:
+        logger.error(
+            "Import LLM parse failed for %s: %s",
+            file.filename,
+            traceback.format_exc(),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Could not parse this bank statement — the AI failed to extract transactions. "
+                "Try the Import page, or a shorter statement period."
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.error(
+            "Import upload failed for %s: %s",
+            file.filename,
+            traceback.format_exc(),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Failed to parse bank statement: {exc}",
+        ) from exc
 
     batch = ImportBatch(
         filename=file.filename,
@@ -86,7 +117,7 @@ async def upload_statement(
             batch_id=batch.id,
             raw_data=row.model_dump(mode="json"),
             date=row.date,
-            amount=row.amount_paise,
+            amount=row.signed_amount_paise,
             description=row.description,
         ))
     session.commit()
@@ -187,6 +218,17 @@ class ConfirmIn(BaseModel):
     fy_id: int | None = None
 
 
+class ApplyMerchantRulesIn(BaseModel):
+    """When only_defaults is true, rules apply only to rows still on Miscellaneous."""
+    only_defaults: bool = True
+    rule_id: int | None = None
+
+
+class ApplyMerchantRulesOut(BaseModel):
+    updated_count: int
+    rows: list[StagingRowOut]
+
+
 class ConfirmOut(BaseModel):
     posted_count: int
     skipped_count: int
@@ -248,6 +290,42 @@ def match_row(
     session.commit()
     session.refresh(row)
     return _row_out(row)
+
+
+@router.post("/{batch_id}/apply-merchant-rules", response_model=ApplyMerchantRulesOut)
+def apply_merchant_rules(
+    batch_id: int,
+    body: ApplyMerchantRulesIn,
+    session: Session = Depends(get_session),
+):
+    batch = session.get(ImportBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Import batch not found")
+    try:
+        if body.rule_id is not None:
+            updated_count = apply_single_rule_to_batch(
+                session,
+                batch_id,
+                body.rule_id,
+                only_defaults=body.only_defaults,
+            )
+        else:
+            updated_count = map_accounts(session, batch_id, only_defaults=body.only_defaults)
+    except Exception as exc:
+        logger.error(
+            "Failed to apply merchant rules to batch id=%s: %s",
+            batch_id,
+            traceback.format_exc(),
+        )
+        raise HTTPException(status_code=500, detail="Failed to apply merchant rules") from exc
+
+    rows = session.exec(
+        select(StagingRow).where(StagingRow.batch_id == batch_id)
+    ).all()
+    return ApplyMerchantRulesOut(
+        updated_count=updated_count,
+        rows=[_row_out(r) for r in rows],
+    )
 
 
 @router.post("/{batch_id}/confirm", response_model=ConfirmOut)

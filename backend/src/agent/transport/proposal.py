@@ -103,6 +103,14 @@ def store_pending(user_key: str, proposal: dict[str, Any]) -> str:
     return proposal_id
 
 
+def peek_latest_pending(user_key: str) -> dict[str, Any] | None:
+    """Return the most recently stored proposal without removing it."""
+    proposal_id = _latest_pending.get(user_key)
+    if proposal_id is None:
+        return None
+    return _pending.get(user_key, {}).get(proposal_id)
+
+
 def pop_latest_pending(user_key: str) -> dict[str, Any] | None:
     """Remove and return the most recently stored proposal for this user/session."""
     proposal_id = _latest_pending.pop(user_key, None)
@@ -218,13 +226,9 @@ async def handle_proposal_action(
     if lowered in _CONFIRM_WORDS:
         if user_key is None:
             return ProposalActionResult("none")
+        if peek_latest_pending(user_key) is None:
+            return ProposalActionResult("none")
         proposal = pop_latest_pending(user_key)
-        if proposal is None:
-            return ProposalActionResult(
-                "agent",
-                "The user said confirm but there is no pending transaction proposal. "
-                "Ask what they want to confirm or help them describe the transaction again.",
-            )
         return await _confirm_proposal_data(proposal, http_client, base_url, user_key=user_key)
 
     if text.startswith("confirm:"):

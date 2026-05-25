@@ -16,6 +16,7 @@ from sqlmodel import SQLModel, Session, create_engine
 from stow.main import app
 from stow.db import get_session
 from stow.seed import seed_account_groups
+from stow.migrations import run_migrations
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ def _truncate_all_tables(session: Session) -> None:
         for table in reversed(SQLModel.metadata.sorted_tables):
             conn.execute(text(f'TRUNCATE TABLE "{table.name}" RESTART IDENTITY CASCADE'))
         conn.commit()
+    run_migrations(session)
     seed_account_groups(session)
 
 
@@ -85,6 +87,7 @@ def _create_engine_from_url(url: str):
     engine = create_engine(url, pool_pre_ping=True)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
+        run_migrations(session)
         _truncate_all_tables(session)
     logger.info("Using external test database (fresh): %s", url.split("@")[-1])
     return engine

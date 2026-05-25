@@ -209,6 +209,7 @@ class MerchantRule(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     pattern: str   # wildcard, case-insensitive, e.g. "BESCOM*"
     account_id: int = Field(foreign_key="account.id")
+    tags: Optional[list] = Field(default=None, sa_column=Column(JSON))
 
 
 class TelegramUser(SQLModel, table=True):

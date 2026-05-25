@@ -1,9 +1,9 @@
-"""Manual test script for the Stow orchestrator agent.
+"""Manual test script for the Stow unified agent.
 
 Usage:
     uv run python scripts/chat.py [--base-url http://localhost:8000]
 
-Prints each tool call and subagent delegation so you can verify routing.
+Prints each tool call so you can verify the agent is using the right tools.
 Loads backend/.env automatically so LLM env vars are available on the host.
 """
 from __future__ import annotations
@@ -31,16 +31,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from subagents_pydantic_ai import SubAgentCapability, SubAgentConfig
 
 from agent.deps import StowDeps
-from agent.subagents.account import build_account_agent
-from agent.subagents.import_agent import build_import_agent
-from agent.subagents.investment import build_investment_agent
-from agent.subagents.recurring import build_recurring_agent
-from agent.subagents.report import build_report_agent
-from agent.subagents.transaction import build_transaction_agent
-from agent.orchestrator import _SYSTEM_PROMPT
+from agent.agent import build_agent
 from stow.ai_config import _model_profile, model_settings
 
 
@@ -67,32 +60,13 @@ def _print_trace(messages: list) -> None:
 
 
 def _build_model(llm_url: str, llm_model: str, llm_api_key: str):
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.openai import OpenAIProvider
     from stow.ai_config import _model_profile
 
     return OpenAIChatModel(
         llm_model,
         provider=OpenAIProvider(base_url=llm_url, api_key=llm_api_key or "not-needed"),
         profile=_model_profile(llm_model),
-        settings=model_settings("orchestrator"),
-    )
-
-
-def _build_orchestrator(model) -> Agent:
-    subagents = [
-        SubAgentConfig(name="transaction_agent", description="Creates, queries, updates, and deletes transactions. Parses natural language descriptions.", agent=build_transaction_agent(model)),
-        SubAgentConfig(name="account_agent", description="Lists, creates, and archives ledger accounts. Looks up account IDs, names, and balances.", agent=build_account_agent(model)),
-        SubAgentConfig(name="import_agent", description="Imports bank statement PDFs, reviews parsed rows, and posts confirmed transactions.", agent=build_import_agent(model)),
-        SubAgentConfig(name="report_agent", description="Generates financial reports and answers balance/spending queries.", agent=build_report_agent(model)),
-        SubAgentConfig(name="investment_agent", description="Manages FDs, mutual fund and stock lots, and portfolio/capital gains queries.", agent=build_investment_agent(model)),
-        SubAgentConfig(name="recurring_agent", description="Processes recurring transaction schedules due today.", agent=build_recurring_agent(model)),
-    ]
-    return Agent(
-        model=model,
-        deps_type=StowDeps,
-        instructions=_SYSTEM_PROMPT,
-        capabilities=[SubAgentCapability(subagents=subagents, default_model=model, include_general_purpose=False, max_nesting_depth=0)],
+        settings=model_settings("agent"),
     )
 
 
@@ -104,7 +78,7 @@ async def main(base_url: str, llm_url: str, llm_model: str, llm_api_key: str) ->
         print("Backend OK\n")
 
         model = _build_model(llm_url, llm_model, llm_api_key)
-        orchestrator = _build_orchestrator(model)
+        agent = build_agent()
         deps = StowDeps(base_url=base_url, http_client=client)
 
         print("Stow agent ready. Type a message, or 'quit' to exit.\n")
@@ -123,17 +97,17 @@ async def main(base_url: str, llm_url: str, llm_model: str, llm_api_key: str) ->
                 break
 
             try:
-                result = await orchestrator.run(
+                result = await agent.run(
                     text,
                     deps=deps,
                     message_history=history,
-                    model_settings=model_settings("orchestrator"),
+                    model_settings=model_settings("agent"),
                 )
             except Exception as exc:
                 print(f"[ERROR] {exc}\n")
                 continue
 
-            # Print tool/subagent trace
+            # Print tool call trace
             new_messages = result.new_messages()
             _print_trace(new_messages)
 

@@ -4,6 +4,7 @@ import { RequireSetup } from './components/RequireSetup'
 import Dashboard from './pages/Dashboard'
 import Transactions from './pages/Transactions'
 import Accounts from './pages/Accounts'
+import Import from './pages/Import'
 import Reports from './pages/Reports'
 import Portfolio from './pages/Portfolio'
 import Settings from './pages/Settings'
@@ -18,6 +19,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/accounts" element={<Accounts />} />
+          <Route path="/import" element={<Import />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/settings" element={<Settings />} />

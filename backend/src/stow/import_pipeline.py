@@ -8,20 +8,69 @@ from datetime import timedelta
 from sqlmodel import Session, select
 
 from stow.fy_resolution import FyResolutionError, resolve_fy_for_posting
-from stow.models import Entry, ImportBatch, MerchantRule, StagingRow, Transaction
+from stow.models import Account, AccountGroup, Entry, ImportBatch, MerchantRule, StagingRow, Transaction
 
 logger = logging.getLogger(__name__)
 
 BANK_GROUPS = {"Bank Accounts", "Cash-in-Hand"}
 
 
-def match_merchant_rule(session: Session, description: str) -> int | None:
-    """Return account_id of the first matching merchant rule, or None."""
+MISC_EXPENSE_GROUP = "Indirect Expenses"
+MISC_INCOME_GROUP = "Indirect Income"
+MISC_ACCOUNT_NAME = "Miscellaneous"
+
+
+def normalize_merchant_pattern(pattern: str) -> str:
+    """Bare patterns match as substring; explicit * / ? use fnmatch semantics."""
+    trimmed = pattern.strip()
+    if not trimmed:
+        return trimmed
+    if "*" not in trimmed and "?" not in trimmed:
+        return f"*{trimmed}*"
+    return trimmed
+
+
+def description_matches_pattern(description: str, pattern: str) -> bool:
+    normalized = normalize_merchant_pattern(pattern)
+    return bool(normalized) and fnmatch.fnmatch(description.lower(), normalized.lower())
+
+
+def default_import_account_id(session: Session, amount_paise: int) -> int | None:
+    """Pre-fill import rows with seeded Miscellaneous expense/income accounts."""
+    group_name = MISC_EXPENSE_GROUP if amount_paise < 0 else MISC_INCOME_GROUP
+    account = session.exec(
+        select(Account)
+        .join(AccountGroup, Account.group_id == AccountGroup.id)
+        .where(AccountGroup.name == group_name)
+        .where(Account.name == MISC_ACCOUNT_NAME)
+    ).first()
+    if account is None:
+        logger.warning(
+            "Default import account %r under %r not found — run seed_account_groups",
+            MISC_ACCOUNT_NAME,
+            group_name,
+        )
+        return None
+    return account.id
+
+
+class MerchantRuleMatch:
+    """Result of matching a description against merchant rules."""
+
+    __slots__ = ("account_id", "tags")
+
+    def __init__(self, account_id: int, tags: list[str] | None = None) -> None:
+        self.account_id = account_id
+        self.tags = tags
+
+
+def match_merchant_rule(session: Session, description: str) -> MerchantRuleMatch | None:
+    """Return account (and optional tags) from the first matching merchant rule."""
     rules = session.exec(select(MerchantRule)).all()
-    desc_lower = description.lower()
     for rule in rules:
-        if fnmatch.fnmatch(desc_lower, rule.pattern.lower()):
-            return rule.account_id
+        if description_matches_pattern(description, rule.pattern):
+            rule_tags = list(rule.tags) if rule.tags else None
+            return MerchantRuleMatch(account_id=rule.account_id, tags=rule_tags)
     return None
 
 
@@ -185,16 +234,83 @@ def confirm_batch(
     return result
 
 
-def map_accounts(session: Session, batch_id: int) -> None:
-    """Apply merchant rules to staging rows, overriding any existing suggestion."""
+def apply_single_rule_to_batch(
+    session: Session,
+    batch_id: int,
+    rule_id: int,
+    *,
+    only_defaults: bool = True,
+) -> int:
+    """Apply one merchant rule to staging rows in a batch."""
+    rule = session.get(MerchantRule, rule_id)
+    if not rule:
+        logger.warning("Merchant rule id=%s not found for batch id=%s", rule_id, batch_id)
+        return 0
+
     rows = session.exec(
         select(StagingRow).where(StagingRow.batch_id == batch_id)
     ).all()
 
+    updated = 0
     for row in rows:
-        rule_account_id = match_merchant_rule(session, row.description)
-        if rule_account_id is not None:
-            row.suggested_account_id = rule_account_id
-            session.add(row)
+        if row.status == "reconciled":
+            continue
+        default_id = default_import_account_id(session, row.amount)
+        if only_defaults and row.suggested_account_id not in (None, default_id):
+            continue
+        if not description_matches_pattern(row.description, rule.pattern):
+            continue
+        row.suggested_account_id = rule.account_id
+        if rule.tags:
+            row.tags = list(rule.tags)
+        session.add(row)
+        updated += 1
 
-    session.commit()
+    if updated:
+        session.commit()
+        logger.info(
+            "Applied merchant rule id=%s pattern=%r to %s row(s) in batch id=%s",
+            rule_id,
+            rule.pattern,
+            updated,
+            batch_id,
+        )
+    return updated
+
+
+def map_accounts(session: Session, batch_id: int, *, only_defaults: bool = False) -> int:
+    """Apply merchant rules, then Miscellaneous defaults for unmapped rows.
+
+    When only_defaults=True, merchant rules update only rows still on the default
+    Miscellaneous account (or unmapped). Used after the user adds a rule mid-review.
+
+    Returns the number of staging rows updated.
+    """
+    rows = session.exec(
+        select(StagingRow).where(StagingRow.batch_id == batch_id)
+    ).all()
+
+    updated = 0
+    for row in rows:
+        if row.status == "reconciled":
+            continue
+
+        default_id = default_import_account_id(session, row.amount)
+        rule_match = match_merchant_rule(session, row.description)
+
+        if rule_match is not None:
+            if only_defaults and row.suggested_account_id not in (None, default_id):
+                continue
+            row.suggested_account_id = rule_match.account_id
+            if rule_match.tags:
+                row.tags = rule_match.tags
+            session.add(row)
+            updated += 1
+        elif not only_defaults and row.suggested_account_id is None and default_id is not None:
+            row.suggested_account_id = default_id
+            session.add(row)
+            updated += 1
+
+    if updated:
+        session.commit()
+    return updated

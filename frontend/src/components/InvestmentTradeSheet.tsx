@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle } from 'lucide-react'
 import { Sheet } from './Sheet'
+import { AccountSelect } from './AccountSelect'
+import { findAccountGroupId } from './InlineAccountSheet'
 import { api, queryKeys } from '../api/api'
 import { refreshLivePrice } from '../api/prices'
 import {
@@ -97,10 +99,18 @@ export function InvestmentTradeSheet({
     enabled: open,
   })
 
+  const { data: accountGroups = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: queryKeys.accountGroups.all(),
+    queryFn: () => api.get('/account-groups'),
+    enabled: open,
+  })
+
   const activeFy = resolveActiveFy(fys)
   const resolvedFy = resolveFyForDate(fys, date)
   const investmentAccounts = investmentAccountsForSelect(accounts, subtype)
   const bankAccounts = bankAccountsForSelect(accounts)
+  const bankGroupId = findAccountGroupId(accountGroups, 'Bank Accounts')
+  const investmentGroupId = findAccountGroupId(accountGroups, 'Investments')
 
   const unitsMilli = unitsToMilliunits(units)
   const pricePaise = rupeesPerUnitToPaise(priceRupees)
@@ -186,19 +196,17 @@ export function InvestmentTradeSheet({
 
         <div>
           <FieldLabel label="Investment account" htmlFor="inv-account" />
-          <select
+          <AccountSelect
             id="inv-account"
-            aria-label="Investment account"
+            ariaLabel="Investment account"
             value={investmentAccountId}
-            onChange={e => setInvestmentAccountId(e.target.value === '' ? '' : Number(e.target.value))}
+            onChange={id => setInvestmentAccountId(id ?? '')}
+            accounts={investmentAccounts}
+            placeholder="Select fund or stock…"
             disabled={mode === 'sell' && !!account}
+            initialGroupId={investmentGroupId}
             className={inputCls}
-          >
-            <option value="">Select fund or stock…</option>
-            {investmentAccounts.map(a => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          />
         </div>
 
         <div>
@@ -206,18 +214,17 @@ export function InvestmentTradeSheet({
             label={mode === 'buy' ? 'Pay from' : 'Receive into'}
             htmlFor="bank-account"
           />
-          <select
+          <AccountSelect
             id="bank-account"
-            aria-label={mode === 'buy' ? 'Pay from' : 'Receive into'}
+            ariaLabel={mode === 'buy' ? 'Pay from' : 'Receive into'}
             value={bankAccountId}
-            onChange={e => setBankAccountId(e.target.value === '' ? '' : Number(e.target.value))}
+            onChange={id => setBankAccountId(id ?? '')}
+            accounts={bankAccounts}
+            placeholder="Select bank account…"
+            showGroupName
+            initialGroupId={bankGroupId}
             className={inputCls}
-          >
-            <option value="">Select bank account…</option>
-            {bankAccounts.map(a => (
-              <option key={a.id} value={a.id}>{a.name} — {a.group_name}</option>
-            ))}
-          </select>
+          />
         </div>
 
         <div>

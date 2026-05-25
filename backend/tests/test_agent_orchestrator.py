@@ -1,4 +1,4 @@
-"""Integration test: orchestrator routes intents to the correct subagent."""
+"""Integration test: unified Stow agent exposes all tools at the top level."""
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -8,7 +8,7 @@ import pytest
 from pydantic_ai.models.test import TestModel
 
 from agent.deps import StowDeps
-from agent.orchestrator import build_orchestrator
+from agent.agent import build_agent
 
 
 @pytest.fixture()
@@ -32,50 +32,68 @@ def deps(http_client):
     return StowDeps(base_url="http://test", http_client=http_client)
 
 
-class TestOrchestratorRouting:
-    """Test that the orchestrator delegates to the correct subagent.
+class TestUnifiedAgent:
+    """Test that the unified agent builds correctly with all tools exposed at the top level.
 
-    Uses TestModel to avoid needing a real LLM. The test verifies that
-    build_orchestrator() constructs successfully and that all subagent
-    configs are properly wired.
+    The old subagent architecture has been replaced with a single agent that has
+    all tools exposed directly. This simplifies routing, reduces LLM calls, and
+    eliminates classification errors.
     """
 
-    def test_build_orchestrator_creates_agent(self):
-        """Orchestrator builds without error when model config is mocked."""
+    def test_build_agent_creates_instance(self):
+        """Agent builds without error when model config is mocked."""
         with patch("stow.ai_config.build_model") as mock_build:
             mock_build.return_value = TestModel()
-            orchestrator = build_orchestrator()
-        assert orchestrator is not None
+            agent = build_agent()
+        assert agent is not None
 
-    def test_orchestrator_has_six_subagents(self):
-        """All six subagents are registered with the orchestrator."""
+    def test_agent_has_all_tools(self):
+        """All tools are registered on the agent (no subagent delegation needed)."""
         with patch("stow.ai_config.build_model") as mock_build:
             mock_build.return_value = TestModel()
-            orchestrator = build_orchestrator()
+            agent = build_agent()
 
-        # SubAgentCapability registers a task() tool on the orchestrator
-        assert orchestrator is not None
+        # The agent should have tools directly — no task() subagent delegation
+        # Count of tools should be substantial (accounts, transactions, investments, etc.)
+        tool_names = [t.__name__ for t in agent._tools]
+        assert len(tool_names) > 20, f"Expected 20+ tools, got {len(tool_names)}"
+
+        # Verify key tools are present
+        expected_tools = {
+            "create_transaction", "list_accounts", "get_active_fy",
+            "buy_investment", "sell_investment", "create_fd",
+            "list_fds", "get_portfolio", "get_capital_gains",
+            "get_profit_loss", "get_balance_sheet", "get_cash_flow",
+            "review_staging", "confirm_staging",
+            "get_recurring_due", "confirm_recurring",
+            "parse_natural_language", "list_transactions",
+            "get_merchant_rules", "resolve_upi_accounts",
+            "create_merchant_rule", "delete_merchant_rule",
+            "get_depreciation_summary", "fetch_prices", "get_tax_rules",
+            "apply_merchant_rules",
+        }
+        actual_tools = set(tool_names)
+        missing = expected_tools - actual_tools
+        assert not missing, f"Missing tools: {missing}"
 
     @pytest.mark.integration
-    async def test_orchestrator_delegates_transaction(self, deps):
-        """End-to-end: orchestrator receives a payment intent and delegates to transaction_agent.
+    async def test_agent_handles_transaction_intent(self, deps):
+        """End-to-end: agent receives a payment intent and processes it.
 
         Requires a real configured LLM — run with --run-integration.
         """
-        orchestrator = build_orchestrator()
-        result = await orchestrator.run(
+        agent = build_agent()
+        result = await agent.run(
             "pay ₹500 from HDFC to Zomato today",
             deps=deps,
         )
         assert result.output is not None
-        # The orchestrator should have delegated to transaction_agent
-        # and returned a proposal or confirmation
         output = result.output.lower()
         assert any(keyword in output for keyword in ["500", "confirm", "payment", "propose"])
 
 
 class TestMerchantRulesTool:
-    """Unit tests for the _get_merchant_rules orchestrator tool."""
+    """Unit tests for the _get_merchant_rules tool."""
 
     @pytest.fixture()
     async def http_client(self, asgi_app, session):
@@ -98,7 +116,7 @@ class TestMerchantRulesTool:
         """_get_merchant_rules fetches all rules from GET /merchant-rules."""
         from sqlmodel import select
         from stow.models import AccountGroup, Account, MerchantRule
-        from agent.orchestrator import _get_merchant_rules
+        from agent.agent import _get_merchant_rules
 
         asset_group = session.exec(
             select(AccountGroup).where(AccountGroup.nature == "asset")
@@ -116,36 +134,28 @@ class TestMerchantRulesTool:
 
     async def test_get_merchant_rules_empty_when_none(self, ctx):
         """_get_merchant_rules returns [] when no rules exist."""
-        from agent.orchestrator import _get_merchant_rules
+        from agent.agent import _get_merchant_rules
 
         rules = await _get_merchant_rules(ctx)
         assert isinstance(rules, list)
 
 
-class TestStowDepsProtocol:
-    """Verify StowDeps satisfies SubAgentDepsProtocol."""
+class TestStowDeps:
+    """Verify StowDeps structure."""
 
-    def test_implements_protocol(self):
-        from subagents_pydantic_ai import SubAgentDepsProtocol
+    def test_build_from_env(self):
+        import os
         import httpx
 
-        async def _make():
-            async with httpx.AsyncClient() as client:
-                deps = StowDeps(base_url="http://test", http_client=client)
-                assert isinstance(deps, SubAgentDepsProtocol)
+        os.environ["STOW_BASE_URL"] = "http://test.example.com"
+        deps = StowDeps.build()
+        assert deps.base_url == "http://test.example.com"
+        assert isinstance(deps.http_client, httpx.AsyncClient)
 
-        import asyncio
-        asyncio.run(_make())
+    def test_default_base_url(self):
+        import os
+        import httpx
 
-    def test_clone_is_fresh(self):
-        import asyncio
-
-        async def _make():
-            async with httpx.AsyncClient() as client:
-                deps = StowDeps(base_url="http://test", http_client=client)
-                deps.subagents["tx"] = object()
-                clone = deps.clone_for_subagent(max_depth=0)
-                assert clone.subagents == {}
-                assert clone is not deps
-
-        asyncio.run(_make())
+        os.environ.pop("STOW_BASE_URL", None)
+        deps = StowDeps.build()
+        assert deps.base_url == "http://localhost:8000"

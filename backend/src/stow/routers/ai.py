@@ -87,7 +87,9 @@ async def test_connection(body: TestConnectionIn = TestConnectionIn()):
         )
         agent = Agent(ai_model)
         start = time.monotonic()
-        await agent.run("ping", model_settings=model_settings("ping"))
+        ping_settings = model_settings("ping")
+        logger.info("Testing LLM connection with max_tokens=%s", ping_settings.get("max_tokens"))
+        await agent.run("ping", model_settings=ping_settings)
         latency_ms = (time.monotonic() - start) * 1000
         return ConnectionResult(ok=True, model=model, latency_ms=round(latency_ms, 1))
     except Exception as exc:

@@ -1,12 +1,30 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  UploadCloud, FileText, X, ChevronDown, Check, AlertTriangle,
-  CheckCircle2, Zap, Info,
+  UploadCloud, FileText, X, Check, Zap,
 } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
+import { AccountSelect } from '../components/AccountSelect'
+import { findAccountGroupId } from '../components/InlineAccountSheet'
+import {
+  ImportReviewRow,
+  type ImportRowDraft,
+  type ImportRowField,
+} from '../components/ImportReviewRow'
+import {
+  merchantPatternMatches,
+  normalizeMerchantPattern,
+  rowEligibleForRuleApply,
+} from '../components/merchantRuleMatch'
+
+interface MerchantRuleOut {
+  id: number
+  pattern: string
+  account_id: number
+  tags: string[]
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,22 +66,19 @@ interface StagingRowOut {
   matched_transaction_id: number | null
 }
 
-interface RowDraft {
-  id: number
-  date: string
-  amount: number
-  description: string
-  possible_duplicate: boolean
-  matched_transaction_id: number | null
-  status: 'pending' | 'confirmed' | 'discarded' | 'reconciled'
-  accountId: number | null
-  originalAccountId: number | null
-  narration: string
-  tags: string
+interface RowDraft extends ImportRowDraft {}
+
+type Filter = 'all' | 'new' | 'dup' | 'matched' | 'unmapped'
+type Step = 1 | 2 | 'done'
+type RowField = ImportRowField
+
+interface RowFocus {
+  rowId: number
+  field: RowField
 }
 
-type Filter = 'all' | 'new' | 'dup' | 'matched'
-type Step = 1 | 2 | 3 | 'done'
+const REVIEW_ROW_HEIGHT = 44
+const REVIEW_OVERSCAN = 12
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -79,20 +94,87 @@ const PARSE_STEPS = [
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function toRowDrafts(rows: StagingRowOut[]): RowDraft[] {
-  return rows.map(r => ({
-    id: r.id,
-    date: r.date,
-    amount: r.amount,
-    description: r.description,
-    possible_duplicate: r.possible_duplicate,
-    matched_transaction_id: r.matched_transaction_id,
-    status: r.status as RowDraft['status'],
-    accountId: r.suggested_account_id,
-    originalAccountId: r.suggested_account_id,
-    narration: r.narration_override ?? r.description,
-    tags: r.tags ? r.tags.join(', ') : '',
-  }))
+  return rows.map(r => {
+    const accountId = r.suggested_account_id
+    const isDuplicate = r.possible_duplicate
+    const isReconciled = r.status === 'reconciled'
+    let status = r.status as RowDraft['status']
+    if (status === 'pending' && accountId && !isDuplicate) {
+      status = 'confirmed'
+    }
+    if (status === 'pending' && isDuplicate) {
+      status = 'discarded'
+    }
+    return {
+      id: r.id,
+      date: r.date,
+      amount: r.amount,
+      description: r.description,
+      possible_duplicate: isDuplicate,
+      matched_transaction_id: r.matched_transaction_id,
+      status,
+      accountId,
+      narration: r.narration_override ?? r.description,
+      tags: r.tags ? r.tags.join(', ') : '',
+    }
+  })
 }
+
+function rowPayload(row: RowDraft) {
+  return {
+    status: row.status,
+    suggested_account_id: row.accountId,
+    narration_override: row.narration,
+    tags: row.tags.split(',').map(t => t.trim()).filter(Boolean),
+  }
+}
+
+function rowIsIncluded(row: RowDraft): boolean {
+  return row.status === 'confirmed' || row.status === 'reconciled' ||
+    (row.status === 'pending' && row.accountId !== null)
+}
+
+/** Align row status with import checkbox before persisting to API. */
+function normalizeRowsForPost(drafts: RowDraft[]): RowDraft[] {
+  return drafts.map(row => {
+    if (row.status === 'reconciled') return row
+    if (rowIsIncluded(row) && row.accountId) {
+      return { ...row, status: 'confirmed' as const }
+    }
+    if (row.status !== 'discarded') {
+      return { ...row, status: 'discarded' as const }
+    }
+    return row
+  })
+}
+
+function applyRuleToDrafts(
+  drafts: RowDraft[],
+  pattern: string,
+  accountId: number,
+  tags: string[],
+  miscExpenseId: number | null,
+  miscIncomeId: number | null,
+): { drafts: RowDraft[]; appliedCount: number } {
+  let appliedCount = 0
+  const next = drafts.map(row => {
+    if (!merchantPatternMatches(row.description, pattern)) return row
+    if (!rowEligibleForRuleApply(row.status, row.accountId, row.amount, miscExpenseId, miscIncomeId)) {
+      return row
+    }
+    appliedCount += 1
+    return {
+      ...row,
+      accountId,
+      tags: tags.length > 0 ? tags.join(', ') : row.tags,
+      status: 'confirmed' as const,
+    }
+  })
+  return { drafts: next, appliedCount }
+}
+
+const inputCls =
+  'w-full min-w-0 px-2 py-1.5 text-xs border border-zinc-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400'
 
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -104,10 +186,31 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+function rowFieldKey(rowId: number, field: RowField) {
+  return `${rowId}:${field}`
+}
+
+function editableFields(row: RowDraft): RowField[] {
+  if (row.status === 'reconciled') return []
+  return ['include', 'account', 'narration', 'tags']
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'TEXTAREA') return true
+  if (tag === 'SELECT') return true
+  if (tag === 'INPUT') {
+    const type = (target as HTMLInputElement).type
+    return type === 'text' || type === 'search' || type === 'email' || type === 'number'
+  }
+  return target.isContentEditable
+}
+
 // ── Step indicator ────────────────────────────────────────────────────────────
 
 function StepIndicator({ current }: { current: Step }) {
-  const steps = [{ n: 1, label: 'Upload' }, { n: 2, label: 'Review' }, { n: 3, label: 'Confirm' }]
+  const steps = [{ n: 1, label: 'Upload' }, { n: 2, label: 'Review & post' }]
   return (
     <div className="flex items-center gap-2">
       {steps.map((s, i) => {
@@ -129,19 +232,10 @@ function StepIndicator({ current }: { current: Step }) {
   )
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
-
-function StatusBadge({ row }: { row: RowDraft }) {
-  if (row.status === 'reconciled') return <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Matched</span>
-  if (row.status === 'confirmed')  return <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-50 text-emerald-600">Accepted</span>
-  if (row.status === 'discarded')  return <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-zinc-100 text-zinc-500">Ignored</span>
-  if (row.possible_duplicate)      return <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">Possible duplicate</span>
-  return <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">New</span>
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Import() {
+  const queryClient = useQueryClient()
   const { data: accounts = [] } = useQuery<AccountOut[]>({
     queryKey: queryKeys.accounts.list(),
     queryFn: () => api.get('/accounts'),
@@ -152,8 +246,26 @@ export default function Import() {
     queryFn: () => api.get('/financial-years'),
   })
 
+  const { data: accountGroups = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: queryKeys.accountGroups.all(),
+    queryFn: () => api.get('/account-groups'),
+  })
+
   const activeFy = fys.find(fy => fy.status === 'active')
   const activeAccounts = accounts.filter(a => !a.is_archived)
+  const bankGroupId = findAccountGroupId(accountGroups, 'Bank Accounts')
+  const miscExpenseId = useMemo(
+    () => activeAccounts.find(a => a.name === 'Miscellaneous' && a.group_name === 'Indirect Expenses')?.id ?? null,
+    [activeAccounts],
+  )
+  const miscIncomeId = useMemo(
+    () => activeAccounts.find(a => a.name === 'Miscellaneous' && a.group_name === 'Indirect Income')?.id ?? null,
+    [activeAccounts],
+  )
+  const accountNameById = useMemo(
+    () => Object.fromEntries(activeAccounts.map(a => [a.id, a.name])),
+    [activeAccounts],
+  )
 
   // ── Wizard state ──────────────────────────────────────────────────────────
 
@@ -166,27 +278,47 @@ export default function Import() {
   const [batch, setBatch] = useState<BatchOut | null>(null)
   const [rowDrafts, setRowDrafts] = useState<RowDraft[]>([])
   const [filter, setFilter] = useState<Filter>('all')
-  const [expandedRowId, setExpandedRowId] = useState<number | null>(null)
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
-  const [confirmResult, setConfirmResult] = useState<{ posted: number; reconciled: number; skipped: number } | null>(null)
-  const [checkedRules, setCheckedRules] = useState<Set<string>>(new Set())
+  const [confirmResult, setConfirmResult] = useState<{
+    posted: number
+    reconciled: number
+    skipped: number
+    serverSkipped?: Array<{ row_id: number; reason: string }>
+  } | null>(null)
+  const [rowFocus, setRowFocus] = useState<RowFocus | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(640)
+  const [rulePattern, setRulePattern] = useState('')
+  const [ruleAccountId, setRuleAccountId] = useState<number | ''>('')
+  const [ruleTags, setRuleTags] = useState('')
+  const [ruleSaving, setRuleSaving] = useState(false)
+  const [ruleError, setRuleError] = useState<string | null>(null)
+  const [lastRuleApplyCount, setLastRuleApplyCount] = useState<number | null>(null)
+
+  const { data: merchantRules = [] } = useQuery<MerchantRuleOut[]>({
+    queryKey: queryKeys.merchantRules.all(),
+    queryFn: () => api.get<MerchantRuleOut[]>('/merchant-rules'),
+    enabled: step === 2,
+  })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
   const parseTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  const rowElementRefs = useRef<Map<number, HTMLTableRowElement>>(new Map())
+  const fieldElementRefs = useRef<Map<string, HTMLElement>>(new Map())
+  const initialFocusDoneRef = useRef(false)
+  const postButtonRef = useRef<HTMLButtonElement>(null)
+  const savedPayloadsRef = useRef<Map<number, string>>(new Map())
 
-  // ── Merchant rule candidates ──────────────────────────────────────────────
-
-  const newRuleCandidates = useMemo(() => {
-    const seen = new Map<string, { description: string; accountId: number }>()
-    for (const r of rowDrafts) {
-      if (r.originalAccountId === null && r.accountId !== null && !seen.has(r.description)) {
-        seen.set(r.description, { description: r.description, accountId: r.accountId })
-      }
+  function storeSavedPayloads(rows: RowDraft[]) {
+    const next = new Map<number, string>()
+    for (const row of rows) {
+      next.set(row.id, JSON.stringify(rowPayload(row)))
     }
-    return [...seen.values()]
-  }, [rowDrafts])
+    savedPayloadsRef.current = next
+  }
 
   // ── File pick ─────────────────────────────────────────────────────────────
 
@@ -236,11 +368,10 @@ export default function Import() {
       setParseStatusIdx(PARSE_STEPS.length - 1)
 
       const rows = await api.get<StagingRowOut[]>(`/imports/${result.id}/rows`)
+      const drafts = toRowDrafts(rows)
       setBatch(result)
-      setRowDrafts(toRowDrafts(rows))
-      setCheckedRules(new Set(
-        rows.filter(r => r.suggested_account_id === null).map(r => r.description)
-      ))
+      setRowDrafts(drafts)
+      storeSavedPayloads(drafts)
 
       setTimeout(() => { setStep(2); setUploading(false) }, 500)
     } catch (e) {
@@ -252,45 +383,64 @@ export default function Import() {
 
   // ── Row mutations (optimistic) ────────────────────────────────────────────
 
-  function patchRow(id: number, patch: Partial<RowDraft>) {
-    setRowDrafts(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
+  function setRowIncludedById(rowId: number, included: boolean) {
+    setRowDrafts(prev => prev.map(r => {
+      if (r.id !== rowId || r.status === 'reconciled') return r
+      if (included) {
+        return { ...r, status: r.accountId ? 'confirmed' : 'pending' }
+      }
+      return { ...r, status: 'discarded' }
+    }))
   }
 
-  function updateRowRemote(id: number, body: Record<string, unknown>) {
+  function setRowAccountById(rowId: number, accountId: number | null) {
+    setRowDrafts(prev => prev.map(r => {
+      if (r.id !== rowId) return r
+      const included = r.status !== 'discarded'
+      return {
+        ...r,
+        accountId,
+        status: !included ? 'discarded' : accountId ? 'confirmed' : 'pending',
+      }
+    }))
+  }
+
+  function setRowNarrationById(rowId: number, narration: string) {
+    setRowDrafts(prev => prev.map(r => r.id === rowId ? { ...r, narration } : r))
+  }
+
+  function setRowTagsById(rowId: number, tags: string) {
+    setRowDrafts(prev => prev.map(r => r.id === rowId ? { ...r, tags } : r))
+  }
+
+  function confirmAllMapped() {
+    setRowDrafts(prev => prev.map(r => {
+      if (r.status === 'reconciled' || r.status === 'discarded') return r
+      if (!r.accountId) return r
+      return { ...r, status: 'confirmed' as const }
+    }))
+  }
+
+  function skipUnmapped() {
+    setRowDrafts(prev => prev.map(r =>
+      r.status === 'pending' && !r.accountId ? { ...r, status: 'discarded' as const } : r
+    ))
+  }
+
+  function skipDuplicates() {
+    setRowDrafts(prev => prev.map(r =>
+      r.possible_duplicate && r.status !== 'reconciled' ? { ...r, status: 'discarded' as const } : r
+    ))
+  }
+
+  async function syncAllRowsBeforePost(rows: RowDraft[]) {
     if (!batch) return
-    api.put(`/imports/${batch.id}/rows/${id}`, body).catch(() => {/* silent — optimistic */})
-  }
-
-  function acceptRow(row: RowDraft) {
-    if (!row.accountId) return
-    patchRow(row.id, { status: 'confirmed' })
-    updateRowRemote(row.id, { status: 'confirmed', suggested_account_id: row.accountId })
-    setExpandedRowId(null)
-  }
-
-  function discardRow(row: RowDraft) {
-    patchRow(row.id, { status: 'discarded' })
-    updateRowRemote(row.id, { status: 'discarded' })
-    setExpandedRowId(null)
-  }
-
-  function setRowAccount(row: RowDraft, accountId: number | null) {
-    patchRow(row.id, { accountId })
-    if (accountId !== null) updateRowRemote(row.id, { suggested_account_id: accountId })
-    // Track new rule candidate
-    if (row.originalAccountId === null && accountId !== null) {
-      setCheckedRules(prev => new Set([...prev, row.description]))
-    }
-  }
-
-  function setRowNarration(row: RowDraft, narration: string) {
-    patchRow(row.id, { narration })
-    updateRowRemote(row.id, { narration_override: narration })
-  }
-
-  function setRowTags(row: RowDraft, tags: string) {
-    patchRow(row.id, { tags })
-    updateRowRemote(row.id, { tags: tags.split(',').map(t => t.trim()).filter(Boolean) })
+    await Promise.all(
+      rows.map(async row => {
+        await api.put(`/imports/${batch.id}/rows/${row.id}`, rowPayload(row))
+        savedPayloadsRef.current.set(row.id, JSON.stringify(rowPayload(row)))
+      }),
+    )
   }
 
   // ── Derived counts ────────────────────────────────────────────────────────
@@ -300,42 +450,288 @@ export default function Import() {
     new:      rowDrafts.filter(r => r.status === 'pending' && !r.possible_duplicate).length,
     dup:      rowDrafts.filter(r => r.possible_duplicate).length,
     matched:  rowDrafts.filter(r => r.status === 'reconciled').length,
-    accepted: rowDrafts.filter(r => r.status === 'confirmed').length,
-    ignored:  rowDrafts.filter(r => r.status === 'discarded').length,
-    pending:  rowDrafts.filter(r => r.status === 'pending').length,
+    unmapped: rowDrafts.filter(r => r.status !== 'discarded' && r.status !== 'reconciled' && !r.accountId).length,
+    toPost:   rowDrafts.filter(r => rowIsIncluded(r) && r.status !== 'reconciled' && r.accountId).length,
+    skipped:  rowDrafts.filter(r => r.status === 'discarded' || (r.status === 'pending' && !r.accountId)).length,
   }), [rowDrafts])
 
   const filteredRows = useMemo(() => {
-    if (filter === 'new')     return rowDrafts.filter(r => r.status === 'pending' && !r.possible_duplicate)
-    if (filter === 'dup')     return rowDrafts.filter(r => r.possible_duplicate)
+    if (filter === 'new') return rowDrafts.filter(r => r.status === 'pending' && !r.possible_duplicate)
+    if (filter === 'dup') return rowDrafts.filter(r => r.possible_duplicate)
     if (filter === 'matched') return rowDrafts.filter(r => r.status === 'reconciled')
+    if (filter === 'unmapped') return rowDrafts.filter(r => r.status !== 'discarded' && r.status !== 'reconciled' && !r.accountId)
     return rowDrafts
   }, [rowDrafts, filter])
 
+  const registerFieldRef = useCallback((rowId: number, field: RowField, el: HTMLElement | null) => {
+    const key = rowFieldKey(rowId, field)
+    if (el) fieldElementRefs.current.set(key, el)
+    else fieldElementRefs.current.delete(key)
+  }, [])
+
+  const registerRowRef = useCallback((rowId: number, el: HTMLTableRowElement | null) => {
+    if (el) rowElementRefs.current.set(rowId, el)
+    else rowElementRefs.current.delete(rowId)
+  }, [])
+
+  const scrollRowIntoView = useCallback((rowId: number) => {
+    rowElementRefs.current.get(rowId)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [])
+
+  const focusRowField = useCallback((rowId: number, field: RowField) => {
+    setRowFocus({ rowId, field })
+    requestAnimationFrame(() => {
+      fieldElementRefs.current.get(rowFieldKey(rowId, field))?.focus()
+      scrollRowIntoView(rowId)
+    })
+  }, [scrollRowIntoView])
+
+  const focusAdjacentRow = useCallback((delta: number, preferredField?: RowField) => {
+    if (filteredRows.length === 0) return
+    const currentField = preferredField ?? rowFocus?.field ?? 'account'
+    const currentIdx = rowFocus
+      ? filteredRows.findIndex(r => r.id === rowFocus.rowId)
+      : (delta > 0 ? -1 : filteredRows.length)
+
+    for (let i = currentIdx + delta; delta > 0 ? i < filteredRows.length : i >= 0; i += delta) {
+      const row = filteredRows[i]
+      const fields = editableFields(row)
+      if (fields.length === 0) continue
+      const field = fields.includes(currentField)
+        ? currentField
+        : (fields.includes('account') ? 'account' : fields[0])
+      focusRowField(row.id, field)
+      return
+    }
+  }, [filteredRows, rowFocus, focusRowField])
+
+  const handleReviewFieldKeyDown = useCallback((
+    e: React.KeyboardEvent,
+    row: RowDraft,
+    field: RowField,
+  ) => {
+    if (e.altKey && e.key === 'ArrowDown') {
+      e.preventDefault()
+      focusAdjacentRow(1, field)
+      return
+    }
+    if (e.altKey && e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusAdjacentRow(-1, field)
+      return
+    }
+    if (field === 'include' && e.key === 'Enter') {
+      e.preventDefault()
+      focusRowField(row.id, 'account')
+      return
+    }
+    if (field === 'narration' && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      focusRowField(row.id, 'tags')
+      return
+    }
+    if (field === 'tags' && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      focusAdjacentRow(1, 'account')
+    }
+  }, [focusAdjacentRow, focusRowField])
+
+  useEffect(() => {
+    if (step !== 2) {
+      initialFocusDoneRef.current = false
+      setRowFocus(null)
+      return
+    }
+    if (initialFocusDoneRef.current || filteredRows.length === 0) return
+    initialFocusDoneRef.current = true
+    const first = filteredRows.find(r =>
+      r.status !== 'reconciled' && r.status !== 'discarded' && !r.accountId,
+    ) ?? filteredRows.find(r => r.status !== 'reconciled')
+    if (first) {
+      focusRowField(first.id, first.accountId ? 'include' : 'account')
+    }
+  }, [step, filteredRows, focusRowField])
+
+  useEffect(() => {
+    if (step !== 2) return
+
+    function onDocumentKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault()
+        postButtonRef.current?.click()
+        return
+      }
+      if (isTypingTarget(e.target)) return
+      if (e.key === 'j' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        focusAdjacentRow(1)
+      } else if (e.key === 'k' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        focusAdjacentRow(-1)
+      }
+    }
+
+    document.addEventListener('keydown', onDocumentKeyDown)
+    return () => document.removeEventListener('keydown', onDocumentKeyDown)
+  }, [step, focusAdjacentRow])
+
+  useEffect(() => {
+    if (step !== 2 || !rowFocus) return
+    if (filteredRows.some(r => r.id === rowFocus.rowId)) return
+    const first = filteredRows.find(r => r.status !== 'reconciled')
+    if (first) focusRowField(first.id, 'account')
+    else setRowFocus(null)
+  }, [step, filter, filteredRows, rowFocus, focusRowField])
+
+  useEffect(() => {
+    const el = tableScrollRef.current
+    if (!el || step !== 2) return
+    const onScroll = () => setScrollTop(el.scrollTop)
+    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight))
+    onScroll()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      ro.disconnect()
+    }
+  }, [step, batch?.id, filter])
+
+  const virtualWindow = useMemo(() => {
+    const total = filteredRows.length
+    if (total === 0) {
+      return { paddingTop: 0, paddingBottom: 0, visibleRows: [] as RowDraft[] }
+    }
+    const startIdx = Math.max(0, Math.floor(scrollTop / REVIEW_ROW_HEIGHT) - REVIEW_OVERSCAN)
+    const endIdx = Math.min(
+      total,
+      Math.ceil((scrollTop + viewportHeight) / REVIEW_ROW_HEIGHT) + REVIEW_OVERSCAN,
+    )
+    return {
+      paddingTop: startIdx * REVIEW_ROW_HEIGHT,
+      paddingBottom: (total - endIdx) * REVIEW_ROW_HEIGHT,
+      visibleRows: filteredRows.slice(startIdx, endIdx),
+    }
+  }, [filteredRows, scrollTop, viewportHeight])
+
+  const handleIncludedChange = useCallback((rowId: number, included: boolean) => {
+    setRowIncludedById(rowId, included)
+  }, [])
+
+  const handleAccountChange = useCallback((rowId: number, accountId: number | null) => {
+    setRowAccountById(rowId, accountId)
+  }, [])
+
+  const handleNarrationCommit = useCallback((rowId: number, narration: string) => {
+    setRowNarrationById(rowId, narration)
+  }, [])
+
+  const handleTagsCommit = useCallback((rowId: number, tags: string) => {
+    setRowTagsById(rowId, tags)
+  }, [])
+
+  const handleFocusField = useCallback((rowId: number, field: RowField) => {
+    setRowFocus({ rowId, field })
+  }, [])
+
+  async function syncRowsToServer(rows: RowDraft[]) {
+    if (!batch || rows.length === 0) return
+    await Promise.all(
+      rows.map(async row => {
+        await api.put(`/imports/${batch.id}/rows/${row.id}`, rowPayload(row))
+        savedPayloadsRef.current.set(row.id, JSON.stringify(rowPayload(row)))
+      }),
+    )
+  }
+
+  async function handleAddMerchantRule() {
+    if (!batch || rulePattern.trim() === '' || ruleAccountId === '') return
+    setRuleSaving(true)
+    setRuleError(null)
+    setLastRuleApplyCount(null)
+    const tags = ruleTags.split(',').map(t => t.trim()).filter(Boolean)
+    const pattern = normalizeMerchantPattern(rulePattern)
+    try {
+      await api.post<MerchantRuleOut>('/merchant-rules', {
+        pattern: rulePattern.trim(),
+        account_id: ruleAccountId,
+        tags,
+      })
+      await queryClient.invalidateQueries({ queryKey: queryKeys.merchantRules.all() })
+
+      const before = new Map(rowDrafts.map(r => [r.id, r]))
+      const { drafts: locallyApplied, appliedCount } = applyRuleToDrafts(
+        rowDrafts,
+        pattern,
+        ruleAccountId,
+        tags,
+        miscExpenseId,
+        miscIncomeId,
+      )
+      const changedRows = locallyApplied.filter(row => {
+        const prev = before.get(row.id)
+        if (!prev) return false
+        return prev.accountId !== row.accountId || prev.tags !== row.tags || prev.status !== row.status
+      })
+
+      setRowDrafts(locallyApplied)
+      await syncRowsToServer(changedRows)
+
+      setLastRuleApplyCount(appliedCount)
+      setRulePattern('')
+      setRuleAccountId('')
+      setRuleTags('')
+    } catch (e) {
+      setRuleError(e instanceof Error ? e.message : 'Failed to save merchant rule')
+    } finally {
+      setRuleSaving(false)
+    }
+  }
+
   const confirmCounts = useMemo(() => ({
-    posted:    rowDrafts.filter(r => r.status === 'confirmed').length,
+    posted: rowDrafts.filter(r => rowIsIncluded(r) && r.status !== 'reconciled' && r.accountId).length,
     reconciled: rowDrafts.filter(r => r.status === 'reconciled').length,
-    skipped:   rowDrafts.filter(r => r.status === 'discarded' || r.status === 'pending').length,
-    netInflow: rowDrafts.filter(r => r.status === 'confirmed').reduce((s, r) => s + r.amount, 0),
+    skipped: rowDrafts.filter(r => !rowIsIncluded(r) || (!r.accountId && r.status !== 'reconciled')).length,
+    netInflow: rowDrafts.filter(r => rowIsIncluded(r) && r.accountId && r.status !== 'reconciled').reduce((s, r) => s + r.amount, 0),
   }), [rowDrafts])
 
   // ── Post ──────────────────────────────────────────────────────────────────
 
   async function handlePost() {
     if (!batch || bankAccountId === '') return
+    if (!activeFy) {
+      setPostError('No active financial year — activate one in Settings before posting.')
+      return
+    }
     setPosting(true)
     setPostError(null)
     try {
-      for (const candidate of newRuleCandidates) {
-        if (checkedRules.has(candidate.description)) {
-          await api.post('/merchant-rules', { pattern: candidate.description, account_id: candidate.accountId })
-        }
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur()
       }
-      const result = await api.post<{ posted_count: number }>(
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+
+      const normalized = normalizeRowsForPost(rowDrafts)
+      setRowDrafts(normalized)
+      await syncAllRowsBeforePost(normalized)
+
+      const result = await api.post<{
+        posted_count: number
+        skipped_count: number
+        skipped: Array<{ row_id: number; reason: string }>
+      }>(
         `/imports/${batch.id}/confirm`,
-        { bank_account_id: bankAccountId }
+        { bank_account_id: bankAccountId, fy_id: activeFy.id },
       )
-      setConfirmResult({ posted: result.posted_count, reconciled: confirmCounts.reconciled, skipped: confirmCounts.skipped })
+
+      const reconciled = normalized.filter(r => r.status === 'reconciled').length
+      const uiSkipped = normalized.filter(r => r.status === 'discarded').length
+      setConfirmResult({
+        posted: result.posted_count,
+        reconciled,
+        skipped: uiSkipped + result.skipped_count,
+        serverSkipped: result.skipped_count > 0 ? result.skipped : undefined,
+      })
       setStep('done')
     } catch (e) {
       setPostError(e instanceof Error ? e.message : 'Failed to post')
@@ -349,8 +745,16 @@ export default function Import() {
   function reset() {
     setStep(1); setBankAccountId(''); setFile(null); setUploading(false)
     setParseStatusIdx(0); setUploadError(null); setBatch(null); setRowDrafts([])
-    setFilter('all'); setExpandedRowId(null); setConfirmResult(null); setPostError(null)
-    setCheckedRules(new Set())
+    setFilter('all'); setConfirmResult(null); setPostError(null)
+    setRowFocus(null)
+    setScrollTop(0)
+    setRulePattern('')
+    setRuleAccountId('')
+    setRuleTags('')
+    setRuleError(null)
+    setLastRuleApplyCount(null)
+    savedPayloadsRef.current = new Map()
+    initialFocusDoneRef.current = false
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -374,24 +778,16 @@ export default function Import() {
               <label className="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
                 Statement for account
               </label>
-              <select
+              <AccountSelect
                 value={bankAccountId}
-                onChange={e => setBankAccountId(e.target.value === '' ? '' : Number(e.target.value))}
+                onChange={id => setBankAccountId(id ?? '')}
+                accounts={activeAccounts}
+                placeholder="Select your bank account…"
                 disabled={uploading}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:opacity-50"
-              >
-                <option value="">Select your bank account…</option>
-                {activeAccounts.filter(a => a.nature === 'asset').map(a => (
-                  <option key={a.id} value={a.id}>{a.name} — {a.group_name}</option>
-                ))}
-                {activeAccounts.some(a => a.nature !== 'asset') && (
-                  <optgroup label="Other accounts">
-                    {activeAccounts.filter(a => a.nature !== 'asset').map(a => (
-                      <option key={a.id} value={a.id}>{a.name} — {a.group_name}</option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+                showGroupName
+                groupByNature
+                initialGroupId={bankGroupId}
+              />
             </div>
 
             {/* 2. Drop zone */}
@@ -477,13 +873,13 @@ export default function Import() {
         </div>
       )}
 
-      {/* ── Step 2: Review ── */}
+      {/* ── Step 2: Review & post ── */}
       {step === 2 && batch && (
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
 
           {/* Sub-header */}
-          <div className="shrink-0 border-b border-zinc-100 px-6 py-3 flex items-center gap-4 flex-wrap bg-white">
-            <div className="flex items-center gap-2 text-xs">
+          <div className="shrink-0 border-b border-zinc-100 px-4 py-2.5 flex items-center gap-3 flex-wrap bg-white">
+            <div className="flex items-center gap-2 text-xs min-w-0">
               {batch.detected_bank && (
                 <span className="font-medium text-zinc-900">{batch.detected_bank}</span>
               )}
@@ -493,12 +889,17 @@ export default function Import() {
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 ml-auto">
-              {(['all', 'new', 'dup', 'matched'] as Filter[]).map(f => {
-                const label = f === 'all' ? `All ${counts.all}` : f === 'new' ? `New ${counts.new}` : f === 'dup' ? `Duplicates ${counts.dup}` : `Matched ${counts.matched}`
+            <div className="flex items-center gap-1.5 flex-wrap ml-auto">
+              {(['all', 'new', 'unmapped', 'dup', 'matched'] as Filter[]).map(f => {
+                const label =
+                  f === 'all' ? `All ${counts.all}` :
+                  f === 'new' ? `New ${counts.new}` :
+                  f === 'unmapped' ? `Unmapped ${counts.unmapped}` :
+                  f === 'dup' ? `Duplicates ${counts.dup}` :
+                  `Matched ${counts.matched}`
                 return (
                   <button key={f} onClick={() => setFilter(f)}
-                    className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${filter === f ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+                    className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${filter === f ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
                   >
                     {label}
                   </button>
@@ -507,220 +908,183 @@ export default function Import() {
             </div>
           </div>
 
-          {/* Info banner */}
-          <div className="shrink-0 bg-blue-50 border-b border-blue-100 px-6 py-2 flex items-center gap-2">
-            <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <p className="text-xs text-blue-700">Review account mappings below. Rows without a mapped account won't be imported.</p>
+          {/* Bulk actions */}
+          <div className="shrink-0 border-b border-zinc-100 px-4 py-2 flex items-center gap-2 flex-wrap bg-zinc-50/80">
+            <button type="button" onClick={confirmAllMapped}
+              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 transition-colors">
+              Confirm all mapped
+            </button>
+            <button type="button" onClick={skipUnmapped}
+              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 transition-colors">
+              Skip unmapped
+            </button>
+            <button type="button" onClick={skipDuplicates}
+              className="text-xs px-2.5 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 transition-colors">
+              Skip duplicates
+            </button>
+            <span className="text-xs text-zinc-500 ml-auto">
+              {counts.toPost} to post · {counts.skipped} skipped
+            </span>
+            <span className="text-[10px] text-zinc-400 hidden lg:inline whitespace-nowrap">
+              Alt+↑↓ rows · Enter next field · j/k · Ctrl+Enter post
+            </span>
           </div>
 
           {/* Table */}
-          <div className="flex-1 overflow-y-auto">
-            <table className="w-full text-sm border-collapse">
-              <thead className="sticky top-0 bg-white border-b border-zinc-200 z-10">
-                <tr className="text-xs text-zinc-500 uppercase tracking-wide">
-                  <th className="px-6 py-2.5 text-left font-medium">Date</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Description</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Amount</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Account</th>
-                  <th className="px-3 py-2.5 text-left font-medium">Status</th>
-                  <th className="pr-6 py-2.5 w-6" />
+          <div ref={tableScrollRef} className="flex-1 overflow-auto min-h-0">
+            <table className="w-full text-sm border-collapse min-w-[960px]">
+              <thead className="sticky top-0 bg-white border-b border-zinc-200 z-10 shadow-sm">
+                <tr className="text-[10px] text-zinc-500 uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left font-medium w-10">Import</th>
+                  <th className="px-2 py-2 text-left font-medium w-[88px]">Date</th>
+                  <th className="px-2 py-2 text-right font-medium w-[100px]">Amount</th>
+                  <th className="px-2 py-2 text-left font-medium min-w-[140px]">Description</th>
+                  <th className="px-2 py-2 text-left font-medium min-w-[160px]">Account</th>
+                  <th className="px-2 py-2 text-left font-medium min-w-[140px]">Narration</th>
+                  <th className="px-3 py-2 text-left font-medium min-w-[100px]">Tags</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map(row => {
-                  const isExpanded = expandedRowId === row.id
-                  return (
-                    <>
-                      <tr
-                        key={row.id}
-                        onClick={() => setExpandedRowId(isExpanded ? null : row.id)}
-                        className={`border-b border-zinc-100 cursor-pointer transition-colors ${
-                          row.status === 'discarded'  ? 'opacity-40' :
-                          row.status === 'reconciled' ? 'bg-emerald-50/60' :
-                          row.possible_duplicate      ? 'bg-amber-50/50' :
-                          isExpanded                  ? 'bg-blue-50/50' :
-                          'hover:bg-zinc-50'
-                        }`}
-                      >
-                        <td className="px-6 py-3 font-mono text-xs text-zinc-600 whitespace-nowrap">{formatDate(row.date)}</td>
-                        <td className="px-3 py-3 max-w-xs">
-                          <p className="text-sm font-medium text-zinc-900 truncate">{row.description}</p>
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <MonoAmount amount={row.amount} className="text-sm" />
-                        </td>
-                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                          {row.status === 'reconciled' ? (
-                            <span className="text-xs text-emerald-700 font-medium">Reconciled</span>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <select
-                                value={row.accountId ?? ''}
-                                onChange={e => setRowAccount(row, e.target.value === '' ? null : Number(e.target.value))}
-                                className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 max-w-[180px]"
-                              >
-                                <option value="">— pick account —</option>
-                                {activeAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                              </select>
-                              {row.originalAccountId !== null && row.accountId === row.originalAccountId && (
-                                <Zap className="w-3 h-3 text-zinc-400 shrink-0" title="Applied from merchant rule" />
-                              )}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3"><StatusBadge row={row} /></td>
-                        <td className="pr-6 py-3 text-right">
-                          <ChevronDown className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
-                        </td>
-                      </tr>
-
-                      {isExpanded && (
-                        <tr key={`${row.id}-d`} className="border-b border-zinc-100">
-                          <td colSpan={6} className="p-0">
-                            {row.status === 'reconciled' ? (
-                              <div className="px-6 py-3 bg-emerald-50 flex items-center gap-2 text-xs">
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <p className="text-emerald-800">Matched to an existing transaction. This row will be marked reconciled — no new transaction created.</p>
-                              </div>
-                            ) : row.possible_duplicate ? (
-                              <div className="px-6 py-3 bg-amber-50 border-l-2 border-amber-400 flex flex-col gap-3 text-xs">
-                                <div className="flex items-start gap-2">
-                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                                  <p className="text-amber-800">A transaction with the same amount on a nearby date may already exist.</p>
-                                </div>
-                                <div className="flex items-center gap-2 ml-5" onClick={e => e.stopPropagation()}>
-                                  <button onClick={() => discardRow(row)}
-                                    className="px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors">
-                                    Skip (it's a duplicate)
-                                  </button>
-                                  <button onClick={() => acceptRow(row)} disabled={!row.accountId}
-                                    className="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg hover:bg-zinc-700 disabled:opacity-40 transition-colors">
-                                    Import anyway
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="px-6 py-3 bg-zinc-50 flex items-start gap-8 text-xs" onClick={e => e.stopPropagation()}>
-                                <div>
-                                  <p className="text-zinc-500 mb-1">Narration</p>
-                                  <input type="text" defaultValue={row.narration} onBlur={e => setRowNarration(row, e.target.value)}
-                                    className="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-900 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-64" />
-                                </div>
-                                <div>
-                                  <p className="text-zinc-500 mb-1">Tags</p>
-                                  <input type="text" defaultValue={row.tags} placeholder="e.g. utilities, home"
-                                    onBlur={e => setRowTags(row, e.target.value)}
-                                    className="border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-500 bg-white focus:outline-none focus:ring-1 focus:ring-zinc-400 w-40" />
-                                </div>
-                                <div className="ml-auto flex items-center gap-2 pt-4">
-                                  <button onClick={() => discardRow(row)}
-                                    className="px-3 py-1.5 text-xs text-zinc-600 border border-zinc-200 rounded-lg hover:bg-zinc-100 transition-colors">
-                                    Ignore
-                                  </button>
-                                  <button onClick={() => acceptRow(row)} disabled={!row.accountId}
-                                    className="px-3 py-1.5 text-xs font-medium text-white bg-zinc-900 rounded-lg hover:bg-zinc-700 disabled:opacity-40 transition-colors">
-                                    Accept
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </>
-                  )
-                })}
+                {virtualWindow.paddingTop > 0 && (
+                  <tr aria-hidden="true" style={{ height: virtualWindow.paddingTop }}>
+                    <td colSpan={7} />
+                  </tr>
+                )}
+                {virtualWindow.visibleRows.map(row => (
+                  <ImportReviewRow
+                    key={row.id}
+                    row={row}
+                    accounts={activeAccounts}
+                    isFocusedRow={rowFocus?.rowId === row.id}
+                    setRowRef={el => registerRowRef(row.id, el)}
+                    registerFieldRef={(field, el) => registerFieldRef(row.id, field, el)}
+                    onIncludedChange={handleIncludedChange}
+                    onAccountChange={handleAccountChange}
+                    onNarrationCommit={handleNarrationCommit}
+                    onTagsCommit={handleTagsCommit}
+                    onFocusField={handleFocusField}
+                    onFieldKeyDown={handleReviewFieldKeyDown}
+                  />
+                ))}
+                {virtualWindow.paddingBottom > 0 && (
+                  <tr aria-hidden="true" style={{ height: virtualWindow.paddingBottom }}>
+                    <td colSpan={7} />
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
 
           {/* Bottom bar */}
-          <div className="shrink-0 border-t border-zinc-200 px-6 py-3 flex items-center gap-3 bg-white">
-            <span className="text-xs text-zinc-500">
-              {counts.accepted} accepted · {counts.ignored} ignored · {counts.pending} pending
-            </span>
-            <div className="flex-1" />
-            <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
-              Back
-            </button>
-            <button onClick={() => setStep(3)} className="px-4 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl hover:bg-zinc-700 transition-colors">
-              Review & confirm →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Step 3: Confirm ── */}
-      {step === 3 && (
-        <div className="flex-1 overflow-y-auto flex items-start justify-center pt-12 pb-8 px-4">
-          <div className="w-full max-w-lg flex flex-col gap-5">
-            <div>
-              <h2 className="text-base font-semibold text-zinc-900">Ready to post</h2>
-              <p className="text-sm text-zinc-500 mt-0.5">Review what's about to be created, then confirm.</p>
+          <div className="shrink-0 border-t border-zinc-200 bg-white px-4 py-3 flex flex-col gap-3">
+            <div className="flex items-center gap-4 flex-wrap text-xs text-zinc-600">
+              <span><strong className="text-zinc-900">{confirmCounts.posted}</strong> new</span>
+              <span><strong className="text-emerald-700">{confirmCounts.reconciled}</strong> reconciled</span>
+              <span><strong className="text-zinc-400">{confirmCounts.skipped}</strong> skipped</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                Net inflow <MonoAmount amount={confirmCounts.netInflow} className="text-xs font-semibold" />
+              </span>
             </div>
 
-            {/* Summary card */}
-            <div className="rounded-2xl border border-zinc-200 divide-y divide-zinc-100 bg-white">
-              <div className="px-5 py-4 flex items-center justify-between">
-                <span className="text-sm text-zinc-600">New transactions</span>
-                <span className="font-mono text-sm font-medium text-zinc-900">{confirmCounts.posted}</span>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <Zap className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                <p className="text-xs font-medium text-zinc-700">Add merchant rule</p>
               </div>
-              <div className="px-5 py-4 flex items-center justify-between">
-                <span className="text-sm text-zinc-600">Matched (reconciled)</span>
-                <span className="font-mono text-sm font-medium text-emerald-700">{confirmCounts.reconciled}</span>
+              <p className="text-[10px] text-zinc-500">
+                Rules take priority over Miscellaneous. Text without <code className="font-mono bg-zinc-100 px-0.5 rounded">*</code> matches as substring (e.g. <code className="font-mono">swiggy</code> → <code className="font-mono">*swiggy*</code>).
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_160px_120px_auto] gap-2 items-end">
+                <div>
+                  <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Pattern</label>
+                  <input
+                    type="text"
+                    value={rulePattern}
+                    onChange={e => setRulePattern(e.target.value)}
+                    placeholder="SWIGGY*"
+                    className={`${inputCls} font-mono`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Account</label>
+                  <AccountSelect
+                    value={ruleAccountId}
+                    onChange={id => setRuleAccountId(id ?? '')}
+                    accounts={activeAccounts}
+                    placeholder="Pick account"
+                    size="sm"
+                    className="w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">Tags</label>
+                  <input
+                    type="text"
+                    value={ruleTags}
+                    onChange={e => setRuleTags(e.target.value)}
+                    placeholder="food, delivery"
+                    className={inputCls}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddMerchantRule}
+                  disabled={ruleSaving || rulePattern.trim() === '' || ruleAccountId === ''}
+                  className="text-xs px-3 py-2 rounded-lg bg-zinc-900 text-white font-medium hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                >
+                  {ruleSaving ? 'Saving…' : 'Add & apply'}
+                </button>
               </div>
-              <div className="px-5 py-4 flex items-center justify-between">
-                <span className="text-sm text-zinc-600">Skipped / ignored</span>
-                <span className="font-mono text-sm font-medium text-zinc-400">{confirmCounts.skipped}</span>
-              </div>
-              <div className="px-5 py-4 flex items-center justify-between bg-zinc-50 rounded-b-2xl">
-                <span className="text-sm font-medium text-zinc-900">Net inflow</span>
-                <MonoAmount amount={confirmCounts.netInflow} className="text-sm font-semibold" />
-              </div>
-            </div>
+              {lastRuleApplyCount !== null && (
+                <p className="text-[10px] text-emerald-700">
+                  Rule saved — applied to {lastRuleApplyCount} row{lastRuleApplyCount !== 1 ? 's' : ''} still on Miscellaneous in this import.
+                </p>
+              )}
+              {ruleError && (
+                <p className="text-xs text-red-600">{ruleError}</p>
+              )}
 
-            {/* Merchant rules */}
-            {newRuleCandidates.length > 0 && (
-              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3.5 flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                  <p className="text-xs font-medium text-zinc-700">Save merchant rules for next time?</p>
+              {merchantRules.length > 0 && (
+                <div className="border-t border-zinc-200/80 pt-2 mt-1">
+                  <p className="text-[10px] font-medium text-zinc-600 uppercase tracking-wide mb-1.5">
+                    Saved rules ({merchantRules.length})
+                  </p>
+                  <ul className="max-h-28 overflow-y-auto flex flex-col gap-1">
+                    {merchantRules.map(rule => (
+                      <li
+                        key={rule.id}
+                        className="text-[11px] text-zinc-700 flex items-center gap-2 min-w-0"
+                      >
+                        <span className="font-mono text-zinc-900 shrink-0">{rule.pattern}</span>
+                        <span className="text-zinc-400 shrink-0">→</span>
+                        <span className="truncate">{accountNameById[rule.account_id] ?? `#${rule.account_id}`}</span>
+                        {rule.tags.length > 0 && (
+                          <span className="text-zinc-400 truncate ml-auto">{rule.tags.join(', ')}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <div className="flex flex-col gap-1.5 pl-5">
-                  {newRuleCandidates.map(candidate => {
-                    const account = activeAccounts.find(a => a.id === candidate.accountId)
-                    return (
-                      <label key={candidate.description} className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={checkedRules.has(candidate.description)}
-                          onChange={e => setCheckedRules(prev => {
-                            const next = new Set(prev)
-                            e.target.checked ? next.add(candidate.description) : next.delete(candidate.description)
-                            return next
-                          })}
-                          className="rounded"
-                        />
-                        Always map <span className="font-medium truncate max-w-[200px]">{candidate.description}</span>
-                        {account && <> → {account.name}</>}
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {postError && (
               <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{postError}</p>
             )}
 
             <div className="flex items-center gap-3">
-              <button onClick={() => setStep(2)} className="flex-1 py-2.5 text-sm text-zinc-600 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
-                ← Back to review
+              <button onClick={() => setStep(1)} className="px-4 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
+                Back
               </button>
-              <button onClick={handlePost} disabled={posting || bankAccountId === ''}
-                className="flex-1 py-2.5 text-sm font-medium text-white bg-zinc-900 rounded-xl hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                {posting ? 'Posting…' : `Post ${confirmCounts.posted} transactions`}
+              <div className="flex-1" />
+              <button
+                ref={postButtonRef}
+                onClick={handlePost}
+                disabled={posting || bankAccountId === '' || confirmCounts.posted + confirmCounts.reconciled === 0}
+                className="px-5 py-2 text-sm font-medium text-white bg-zinc-900 rounded-xl hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Post transactions (Ctrl+Enter)"
+              >
+                {posting ? 'Posting…' : `Post ${confirmCounts.posted + confirmCounts.reconciled} transactions`}
               </button>
             </div>
           </div>
@@ -742,6 +1106,12 @@ export default function Import() {
                 {confirmResult.reconciled > 0 && `${confirmResult.reconciled} reconciled. `}
                 {confirmResult.skipped > 0 && `${confirmResult.skipped} skipped.`}
               </p>
+              {confirmResult.serverSkipped && confirmResult.serverSkipped.length > 0 && (
+                <p className="text-xs text-amber-700 mt-2 text-left max-w-sm">
+                  Some rows could not be posted:{' '}
+                  {confirmResult.serverSkipped.slice(0, 3).map(s => s.reason).join('; ')}
+                </p>
+              )}
             </div>
             <div className="flex gap-3">
               <button onClick={reset} className="px-4 py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">

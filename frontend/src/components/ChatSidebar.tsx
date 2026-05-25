@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Send, Paperclip, Bot, User, AlertCircle, RotateCcw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -168,6 +169,20 @@ export function ChatSidebar() {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
+    if (!file.type.startsWith('image/')) {
+      setMessages(prev => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'user', content: `📎 ${file.name}` },
+        {
+          id: crypto.randomUUID(),
+          role: 'agent',
+          content:
+            'Bank statement PDFs are imported via **Bank Import** in the sidebar — upload, review rows, then confirm. Chat supports UPI payment screenshots only.',
+        },
+      ])
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = () => {
       const b64 = (reader.result as string).split(',')[1]
@@ -215,7 +230,11 @@ export function ChatSidebar() {
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
         {messages.length === 0 && (
           <p className="text-xs text-zinc-400 text-center mt-10 px-2 leading-relaxed">
-            Ask anything — record a transaction, check balances, or send a bank statement.
+            Ask anything — record a transaction, check balances, or send a UPI screenshot.{' '}
+            <Link to="/import" className="text-blue-600 underline underline-offset-2">
+              Bank Import
+            </Link>{' '}
+            for statement PDFs.
           </p>
         )}
 
@@ -259,14 +278,14 @@ export function ChatSidebar() {
           <button
             onClick={() => fileInputRef.current?.click()}
             className="shrink-0 p-1.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-lg transition-colors"
-            title="Attach image or PDF"
+            title="Attach UPI screenshot"
           >
             <Paperclip className="w-4 h-4" />
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,.pdf"
+            accept="image/*"
             className="hidden"
             onChange={e => {
               const f = e.target.files?.[0]

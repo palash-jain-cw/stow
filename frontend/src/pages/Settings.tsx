@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, Loader2, Pencil, Trash2 } from 'lucide-react'
 import { api, queryKeys } from '../api/api'
 import { MonoAmount } from '../components/MonoAmount'
+import { AccountSelect } from '../components/AccountSelect'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,7 @@ interface RuleOut {
   id: number
   pattern: string
   account_id: number
+  tags: string[]
 }
 
 interface AiConfig {
@@ -725,6 +727,7 @@ function MerchantRulesPanel() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editPattern, setEditPattern] = useState('')
   const [editAccountId, setEditAccountId] = useState<number | ''>('')
+  const [editTags, setEditTags] = useState('')
   const [undoToast, setUndoToast] = useState<{ rule: RuleOut; timer: ReturnType<typeof setTimeout> } | null>(null)
 
   const { data: rules = [] } = useQuery<RuleOut[]>({
@@ -743,11 +746,17 @@ function MerchantRulesPanel() {
     setEditingId(rule.id)
     setEditPattern(rule.pattern)
     setEditAccountId(rule.account_id)
+    setEditTags((rule.tags ?? []).join(', '))
   }
 
   const saveEdit = async () => {
     if (!editingId || editAccountId === '') return
-    await api.put<RuleOut>(`/merchant-rules/${editingId}`, { pattern: editPattern, account_id: editAccountId })
+    const tags = editTags.split(',').map(t => t.trim()).filter(Boolean)
+    await api.put<RuleOut>(`/merchant-rules/${editingId}`, {
+      pattern: editPattern,
+      account_id: editAccountId,
+      tags,
+    })
     qc.invalidateQueries({ queryKey: queryKeys.merchantRules.all() })
     setEditingId(null)
   }
@@ -773,7 +782,11 @@ function MerchantRulesPanel() {
     if (!undoToast) return
     clearTimeout(undoToast.timer)
     setUndoToast(null)
-    await api.post<RuleOut>('/merchant-rules', { pattern: undoToast.rule.pattern, account_id: undoToast.rule.account_id })
+    await api.post<RuleOut>('/merchant-rules', {
+      pattern: undoToast.rule.pattern,
+      account_id: undoToast.rule.account_id,
+      tags: undoToast.rule.tags,
+    })
     qc.invalidateQueries({ queryKey: queryKeys.merchantRules.all() })
   }
 
@@ -781,7 +794,7 @@ function MerchantRulesPanel() {
     <div>
       <div className="mb-4">
         <h2 className="text-base font-semibold text-zinc-900">Merchant Rules</h2>
-        <p className="text-sm text-zinc-500 mt-0.5">Saved mappings applied automatically during bank import before AI suggestions.</p>
+        <p className="text-sm text-zinc-500 mt-0.5">Saved mappings applied automatically during bank import. Rules take priority over Miscellaneous defaults.</p>
       </div>
 
       <div className="border border-zinc-200 rounded-xl overflow-hidden">
@@ -790,6 +803,7 @@ function MerchantRulesPanel() {
             <tr className="border-b border-zinc-200 bg-zinc-50">
               <th className="text-left px-4 py-2 font-medium text-zinc-500">Merchant pattern</th>
               <th className="text-left px-4 py-2 font-medium text-zinc-500">Maps to account</th>
+              <th className="text-left px-4 py-2 font-medium text-zinc-500">Tags</th>
               <th className="text-left px-4 py-2 font-medium text-zinc-500">Type</th>
               <th className="w-20" />
             </tr>
@@ -805,19 +819,25 @@ function MerchantRulesPanel() {
                       onChange={e => setEditPattern(e.target.value)}
                     />
                   </td>
-                  <td className="px-4 py-2" colSpan={2}>
-                    <select
-                      className="w-full border border-zinc-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-300"
+                  <td className="px-4 py-2">
+                    <AccountSelect
                       value={editAccountId}
-                      onChange={e => setEditAccountId(Number(e.target.value))}
-                    >
-                      <option value="">— pick account —</option>
-                      {accounts.filter(a => !a.is_archived).map(a => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
+                      onChange={id => setEditAccountId(id ?? '')}
+                      accounts={accounts.filter(a => !a.is_archived)}
+                      placeholder="— pick account —"
+                      size="sm"
+                      className="w-full border-zinc-200 focus:ring-zinc-300"
+                    />
                   </td>
                   <td className="px-4 py-2">
+                    <input
+                      className="w-full border border-zinc-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-300"
+                      value={editTags}
+                      onChange={e => setEditTags(e.target.value)}
+                      placeholder="utilities, food"
+                    />
+                  </td>
+                  <td className="px-4 py-2" colSpan={2}>
                     <div className="flex gap-1 justify-end">
                       <button onClick={saveEdit} className="text-xs bg-zinc-900 text-white px-2 py-1 rounded-lg">Save</button>
                       <button onClick={() => setEditingId(null)} className="text-xs text-zinc-500 px-2 py-1">Cancel</button>
@@ -828,6 +848,7 @@ function MerchantRulesPanel() {
                 <tr key={rule.id} className="bg-white hover:bg-zinc-50 transition-colors">
                   <td className="px-4 py-3 font-mono text-sm text-zinc-800">{rule.pattern}</td>
                   <td className="px-4 py-3 text-zinc-700">{accountMap[rule.account_id]?.name ?? `#${rule.account_id}`}</td>
+                  <td className="px-4 py-3 text-zinc-500 text-xs">{rule.tags.length ? rule.tags.join(', ') : '—'}</td>
                   <td className="px-4 py-3 text-zinc-500 text-xs capitalize">{accountMap[rule.account_id]?.nature ?? '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2 justify-end">
@@ -844,7 +865,7 @@ function MerchantRulesPanel() {
             ))}
             {rules.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-sm text-zinc-400">No merchant rules yet.</td>
+                <td colSpan={5} className="px-4 py-8 text-center text-sm text-zinc-400">No merchant rules yet.</td>
               </tr>
             )}
           </tbody>

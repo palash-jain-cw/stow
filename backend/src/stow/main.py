@@ -24,6 +24,7 @@ from stow.routers import reset as reset_router
 from stow.routers import telegram as telegram_router
 from stow.scheduler import register_schedules
 from stow.seed import seed_account_groups
+from stow.migrations import run_migrations
 
 
 from agent.transport.telegram.bot import lifespan_telegram
@@ -33,6 +34,7 @@ from agent.transport.telegram.bot import lifespan_telegram
 async def lifespan(app: FastAPI):
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
+        run_migrations(session)
         seed_account_groups(session)
 
     async with lifespan_telegram(app):

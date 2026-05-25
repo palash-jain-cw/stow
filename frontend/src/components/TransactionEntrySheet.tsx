@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, Plus, Paperclip, CheckCircle, AlertCircle, X, ChevronUp } from 'lucide-react'
 import { Sheet } from './Sheet'
 import { Tooltip } from './Tooltip'
+import { AccountCombobox } from './AccountCombobox'
+import { AccountSelect } from './AccountSelect'
 import { api, queryKeys } from '../api/api'
 import { formatFyLabel, resolveFyForDate } from './fyHelpers'
 
@@ -153,210 +155,6 @@ function inputCls() {
   return 'w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition bg-white'
 }
 
-// ── Account combobox ───────────────────────────────────────────────────────
-
-interface GroupedSection {
-  nature: string
-  items: AccountOut[]
-  startIdx: number
-}
-
-interface AccountComboboxProps {
-  label: string
-  tooltip: string
-  value: number | null
-  onChange: (id: number | null) => void
-  accounts: AccountOut[]
-  error?: string
-  required?: boolean
-}
-
-function AccountCombobox({
-  label,
-  tooltip,
-  value,
-  onChange,
-  accounts,
-  error,
-}: AccountComboboxProps) {
-  const [query, setQuery] = useState(() => accounts.find(a => a.id === value)?.name ?? '')
-  const [open, setOpen] = useState(false)
-  const [highlightedIdx, setHighlightedIdx] = useState(0)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
-
-  // Sync input text when value changes externally
-  useEffect(() => {
-    const acc = accounts.find(a => a.id === value)
-    setQuery(acc?.name ?? '')
-  }, [value, accounts])
-
-  // Click-outside to close
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-        // Restore display name if user typed but didn't select
-        const acc = accounts.find(a => a.id === value)
-        setQuery(acc?.name ?? '')
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [value, accounts])
-
-  const filtered = query.trim() === ''
-    ? accounts
-    : accounts.filter(a => a.name.toLowerCase().includes(query.trim().toLowerCase()))
-
-  // Reset highlight when filtered list changes
-  useEffect(() => {
-    setHighlightedIdx(0)
-  }, [query])
-
-  // Scroll highlighted item into view
-  useEffect(() => {
-    if (open && listRef.current) {
-      const item = listRef.current.children[highlightedIdx] as HTMLElement | undefined
-      item?.scrollIntoView({ block: 'nearest' })
-    }
-  }, [highlightedIdx, open])
-
-  const selectAccount = (acc: AccountOut) => {
-    onChange(acc.id)
-    setQuery(acc.name)
-    setOpen(false)
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!open) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
-        setOpen(true)
-        e.preventDefault()
-      }
-      return
-    }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setHighlightedIdx(i => Math.min(i + 1, filtered.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setHighlightedIdx(i => Math.max(i - 1, 0))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      if (filtered[highlightedIdx]) {
-        selectAccount(filtered[highlightedIdx])
-      }
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      setOpen(false)
-      const acc = accounts.find(a => a.id === value)
-      setQuery(acc?.name ?? '')
-    } else if (e.key === 'Tab') {
-      setOpen(false)
-      const acc = accounts.find(a => a.id === value)
-      setQuery(acc?.name ?? '')
-    }
-  }
-
-  // Group for display in dropdown
-  const natures = ['asset', 'liability', 'equity', 'income', 'expense']
-
-  // Build flat filtered list with group separators for display
-  // We need flat index mapping for keyboard nav, so build a flat array of accounts
-  // grouped display is cosmetic only
-  const groups: GroupedSection[] = []
-  let idx = 0
-  for (const nature of natures) {
-    const items = filtered.filter(a => a.nature === nature)
-    if (items.length > 0) {
-      groups.push({ nature, items, startIdx: idx })
-      idx += items.length
-    }
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <div className="flex items-center gap-1.5 mb-2">
-        <FieldLabel>{label}</FieldLabel>
-        <Tooltip content={tooltip} />
-      </div>
-      <input
-        type="text"
-        role="combobox"
-        aria-expanded={open}
-        aria-autocomplete="list"
-        autoComplete="off"
-        value={query}
-        placeholder="Type to search accounts…"
-        onChange={e => {
-          setQuery(e.target.value)
-          setOpen(true)
-          if (e.target.value === '') {
-            onChange(null)
-          }
-        }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={handleKeyDown}
-        className={
-          inputCls() +
-          (error ? ' border-red-400 focus:ring-red-400' : '')
-        }
-      />
-      {error && (
-        <p className="mt-1 text-xs text-red-500">{error}</p>
-      )}
-
-      {open && (
-        <ul
-          ref={listRef}
-          role="listbox"
-          className="absolute z-50 mt-1 w-full bg-white border border-zinc-200 rounded-xl shadow-lg max-h-56 overflow-y-auto"
-        >
-          {filtered.length === 0 ? (
-            <li className="px-3.5 py-2.5 text-sm text-zinc-400">No accounts found</li>
-          ) : (
-            groups.map(group => (
-              <li key={group.nature}>
-                <div className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400 select-none">
-                  {group.nature.charAt(0).toUpperCase() + group.nature.slice(1)}
-                </div>
-                <ul>
-                  {group.items.map((acc, relIdx) => {
-                    const absIdx = group.startIdx + relIdx
-                    const isHighlighted = absIdx === highlightedIdx
-                    return (
-                      <li
-                        key={acc.id}
-                        role="option"
-                        aria-selected={acc.id === value}
-                        onMouseDown={e => {
-                          e.preventDefault()
-                          selectAccount(acc)
-                        }}
-                        onMouseEnter={() => setHighlightedIdx(absIdx)}
-                        className={`px-3.5 py-2 text-sm cursor-pointer select-none ${
-                          isHighlighted
-                            ? 'bg-blue-50 text-blue-700'
-                            : acc.id === value
-                            ? 'bg-zinc-50 text-zinc-900 font-medium'
-                            : 'text-zinc-700 hover:bg-zinc-50'
-                        }`}
-                      >
-                        {acc.name}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </li>
-            ))
-          )}
-        </ul>
-      )}
-    </div>
-  )
-}
-
 // ── Journal entries table ──────────────────────────────────────────────────
 
 function JournalEntriesTable({
@@ -397,14 +195,14 @@ function JournalEntriesTable({
             {entries.map((entry, i) => (
               <tr key={i}>
                 <td className="px-2 py-2">
-                  <select
-                    value={entry.accountId ?? ''}
-                    onChange={e => update(i, 'accountId', e.target.value ? Number(e.target.value) : null)}
-                    className="w-full text-xs border border-zinc-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-                  >
-                    <option value="">Select account</option>
-                    {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
+                  <AccountSelect
+                    value={entry.accountId}
+                    onChange={id => update(i, 'accountId', id)}
+                    accounts={accounts}
+                    placeholder="Select account"
+                    size="sm"
+                    className="w-full max-w-none cursor-pointer"
+                  />
                 </td>
                 <td className="px-2 py-2">
                   <input

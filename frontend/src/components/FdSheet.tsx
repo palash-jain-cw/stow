@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircle } from 'lucide-react'
 import { Sheet } from './Sheet'
+import { AccountSelect } from './AccountSelect'
+import { findAccountGroupId } from './InlineAccountSheet'
 import { api, queryKeys } from '../api/api'
 import {
   bankAccountsForSelect,
@@ -109,9 +111,16 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
     enabled: open,
   })
 
+  const { data: accountGroups = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: queryKeys.accountGroups.all(),
+    queryFn: () => api.get('/account-groups'),
+    enabled: open,
+  })
+
   const activeFy = resolveActiveFy(fys)
   const resolvedFy = resolveFyForDate(fys, date)
   const bankAccounts = bankAccountsForSelect(accounts)
+  const bankGroupId = findAccountGroupId(accountGroups, 'Bank Accounts')
 
   const maturityPreview = fd ? fd.principal + fd.accrued_interest : 0
 
@@ -267,18 +276,17 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
             </div>
             <div>
               <FieldLabel label="Fund from" htmlFor="fd-from" />
-              <select
+              <AccountSelect
                 id="fd-from"
-                aria-label="Fund from"
+                ariaLabel="Fund from"
                 value={fromAccountId}
-                onChange={e => setFromAccountId(e.target.value === '' ? '' : Number(e.target.value))}
+                onChange={id => setFromAccountId(id ?? '')}
+                accounts={bankAccounts}
+                placeholder="Select bank account…"
+                showGroupName
+                initialGroupId={bankGroupId}
                 className={inputCls}
-              >
-                <option value="">Select bank account…</option>
-                {bankAccounts.map(a => (
-                  <option key={a.id} value={a.id}>{a.name} — {a.group_name}</option>
-                ))}
-              </select>
+              />
             </div>
             <div>
               <FieldLabel label="Transaction date" htmlFor="fd-date" />
@@ -314,18 +322,17 @@ export function FdSheet({ open, onClose, mode, fd, onSaved }: FdSheetProps) {
               </dl>
               <div>
                 <FieldLabel label="Receive into" htmlFor="fd-to" />
-                <select
+                <AccountSelect
                   id="fd-to"
-                  aria-label="Receive into"
+                  ariaLabel="Receive into"
                   value={toAccountId}
-                  onChange={e => setToAccountId(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={id => setToAccountId(id ?? '')}
+                  accounts={bankAccounts}
+                  placeholder="Select bank account…"
+                  showGroupName
+                  initialGroupId={bankGroupId}
                   className={inputCls}
-                >
-                  <option value="">Select bank account…</option>
-                  {bankAccounts.map(a => (
-                    <option key={a.id} value={a.id}>{a.name} — {a.group_name}</option>
-                  ))}
-                </select>
+                />
               </div>
               <div>
                 <FieldLabel label="Maturity date" htmlFor="fd-mature-date" />

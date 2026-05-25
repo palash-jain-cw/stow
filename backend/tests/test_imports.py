@@ -1,14 +1,14 @@
 import io
 import pytest
 from datetime import date, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+from sqlmodel import select
 
 from stow.models import (
     ImportBatch, StagingRow, MerchantRule,
-    AccountGroup, Account,
+    AccountGroup, Account, Transaction, Entry,
 )
-from stow.main import app
-from stow.ai_agent import get_ai_agent
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,8 @@ def test_merchant_rule_matches_wildcard(session, bank_account):
     session.commit()
 
     matched = match_merchant_rule(session, "BESCOM ELECTRICITY BILL")
-    assert matched == bank_account.id
+    assert matched is not None
+    assert matched.account_id == bank_account.id
 
 
 def test_merchant_rule_no_match(session, bank_account):
@@ -112,7 +113,17 @@ def test_merchant_rule_case_insensitive(session, bank_account):
     session.commit()
 
     matched = match_merchant_rule(session, "SWIGGY ORDER 12345")
-    assert matched == bank_account.id
+    assert matched is not None
+    assert matched.account_id == bank_account.id
+
+
+def test_merchant_rule_bare_pattern_matches_substring(session, bank_account):
+    session.add(MerchantRule(pattern="swiggy", account_id=bank_account.id))
+    session.commit()
+
+    matched = match_merchant_rule(session, "UPI-SWIGGY BANGALORE")
+    assert matched is not None
+    assert matched.account_id == bank_account.id
 
 
 # ---------------------------------------------------------------------------
@@ -214,41 +225,230 @@ from stow.import_parsers import ParsedStatement, ParsedRow
 
 
 @pytest.fixture()
-def mock_parse_agent():
-    agent = MagicMock()
-    result = MagicMock()
-    result.data = ParsedStatement(
+def mock_parsed_statement():
+    return ParsedStatement(
         bank="HDFC Bank",
         statement_from=date(2026, 4, 1),
         statement_to=date(2026, 4, 30),
         rows=[
-            ParsedRow(date=date(2026, 4, 5), amount_paise=-120000, description="BESCOM ELECTRICITY"),
-            ParsedRow(date=date(2026, 4, 10), amount_paise=500000, description="SALARY CREDIT"),
+            ParsedRow(
+                date=date(2026, 4, 5),
+                amount_paise=120000,
+                flow="out",
+                description="BESCOM ELECTRICITY",
+            ),
+            ParsedRow(
+                date=date(2026, 4, 10),
+                amount_paise=500000,
+                flow="in",
+                description="SALARY CREDIT",
+            ),
         ],
     )
-    agent.run = AsyncMock(return_value=result)
-    return agent
 
 
-def test_post_imports_creates_batch_and_rows(client, mock_parse_agent):
-    app.dependency_overrides[get_ai_agent] = lambda: mock_parse_agent
-
+def test_post_imports_creates_batch_and_rows(client, mock_parsed_statement):
     fake_pdf = io.BytesIO(b"%PDF-1.4 fake content")
 
-    with patch("stow.routers.imports.extract_pdf_text", return_value="fake pdf text"):
-        try:
-            r = client.post(
-                "/imports",
-                files={"file": ("hdfc_april.pdf", fake_pdf, "application/pdf")},
-            )
-        finally:
-            app.dependency_overrides.pop(get_ai_agent, None)
+    with patch(
+        "stow.routers.imports.parse_statement_pdf",
+        new=AsyncMock(return_value=mock_parsed_statement),
+    ):
+        r = client.post(
+            "/imports",
+            files={"file": ("hdfc_april.pdf", fake_pdf, "application/pdf")},
+        )
 
     assert r.status_code == 201
     data = r.json()
     assert data["detected_bank"] == "HDFC Bank"
     assert data["status"] == "ready"
     assert data["row_count"] == 2
+
+
+def test_upload_rejects_invalid_pdf_bytes(client):
+    r = client.post(
+        "/imports",
+        files={"file": ("bad.pdf", b"not-a-pdf", "application/pdf")},
+    )
+    assert r.status_code == 422
+    assert "pdf" in r.json()["detail"].lower()
+
+
+def test_import_parser_agent_uses_parsed_statement_on_first_page():
+    from stow.import_parsers import ParsedStatement, build_import_parser_agent
+
+    agent = build_import_parser_agent()
+    assert agent.output_type is ParsedStatement
+    assert agent._max_output_retries == 3
+
+
+def test_parsed_row_flow_out_is_negative_signed_amount():
+    from stow.import_parsers import ParsedRow
+
+    row = ParsedRow(
+        date=date(2026, 4, 5),
+        amount_paise=120000,
+        flow="out",
+        description="SWIGGY",
+    )
+    assert row.signed_amount_paise == -120000
+
+
+def test_parsed_row_flow_in_is_positive_signed_amount():
+    from stow.import_parsers import ParsedRow
+
+    row = ParsedRow(
+        date=date(2026, 4, 10),
+        amount_paise=500000,
+        flow="in",
+        description="SALARY",
+    )
+    assert row.signed_amount_paise == 500000
+
+
+def test_parsed_row_legacy_signed_amount_infers_flow():
+    from stow.import_parsers import ParsedRow
+
+    out_row = ParsedRow(date=date(2026, 4, 5), amount_paise=-120000, description="BESCOM")
+    in_row = ParsedRow(date=date(2026, 4, 10), amount_paise=500000, description="SALARY")
+    assert out_row.flow == "out"
+    assert out_row.signed_amount_paise == -120000
+    assert in_row.flow == "in"
+    assert in_row.signed_amount_paise == 500000
+
+
+def test_parse_markdown_debit_credit_table():
+    from stow.import_parsers import _parse_debit_credit_table
+
+    table = [
+        ["Tran Date", "Chq No", "Particulars", "Debit", "Credit", "Balance", "Init. Br"],
+        ["", "", "OPENING BALANCE", "", "", "1705.97", ""],
+        ["22-05-2026", "", "UPI/P2A/614217772364/Mr MANOJ /CBIN/UPI/", "", "10000.00", "11705.97", "521"],
+        ["23-05-2026", "", "UPI/P2A/123566665387/SHIVAPUTRA", "15.00", "", "11690.97", "521"],
+        ["", "", "TRANSACTION TOTAL", "15.00", "10000.00", "", ""],
+    ]
+    rows, schema = _parse_debit_credit_table(table)
+    assert len(rows) == 2
+    assert rows[0].flow == "in"
+    assert rows[0].amount_paise == 1_000_000
+    assert rows[1].flow == "out"
+    assert rows[1].amount_paise == 1500
+    assert schema is not None
+
+    continuation = [
+        ["24-05-2026", "", "UPI/P2M/809958567940/Dominos Pizza", "410.05", "", "9951.92", "521"],
+        ["TRANSACTION TOTAL", "1017203.26", "1005315.77"],
+    ]
+    cont_rows, _ = _parse_debit_credit_table(continuation, schema)
+    assert len(cont_rows) == 1
+    assert cont_rows[0].flow == "out"
+    assert cont_rows[0].amount_paise == 41005
+
+
+def test_try_parse_statement_from_tables_axis_sample():
+    from stow.import_parsers import try_parse_statement_from_tables
+
+    markdown = """
+**Statement of Axis Account No: 916010024744783 for the period (From: 22-05-2026  To: 23-05-2026)**
+
+|Tran Date|Chq No|Particulars|Debit|Credit|Balance|Init.<br>Br|
+|---|---|---|---|---|---|---|
+|||**OPENING BALANCE**|||**1705.97**||
+|22-05-2026||UPI/P2A/614217772364/Mr MANOJ /CBIN/UPI/||10000.00|11705.97|521|
+|23-05-2026||UPI/P2A/123566665387/SHIVAPUTRA|15.00||11690.97|521|
+"""
+    with patch(
+        "stow.import_parsers.extract_pdf_page_chunks",
+        return_value=[{"text": markdown, "metadata": {"page_number": 1}}],
+    ):
+        parsed = try_parse_statement_from_tables(b"%PDF fake")
+
+    assert parsed is not None
+    assert parsed.bank == "Axis Bank"
+    assert len(parsed.rows) == 2
+    assert parsed.rows[0].signed_amount_paise == 1_000_000
+    assert parsed.rows[1].signed_amount_paise == -1500
+
+
+def test_merge_parsed_pages_combines_rows_and_metadata():
+    from stow.import_parsers import ParsedPage, merge_parsed_pages
+
+    pages = [
+        ParsedPage(
+            bank="Axis Bank",
+            statement_from=date(2026, 5, 1),
+            statement_to=date(2026, 5, 31),
+            rows=[ParsedRow(date=date(2026, 5, 10), amount_paise=-50000, description="SWIGGY")],
+        ),
+        ParsedPage(
+            rows=[ParsedRow(date=date(2026, 5, 11), amount_paise=100000, description="SALARY")],
+        ),
+    ]
+    merged = merge_parsed_pages(pages)
+    assert merged.bank == "Axis Bank"
+    assert merged.statement_from == date(2026, 5, 1)
+    assert len(merged.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_statement_pdf_batches_two_pages_per_llm_call():
+    from stow.import_parsers import ParsedPage, parse_statement_pdf
+
+    batch_one = ParsedPage(
+        bank="HDFC Bank",
+        statement_from=date(2026, 4, 1),
+        statement_to=date(2026, 4, 30),
+        rows=[
+            ParsedRow(date=date(2026, 4, 5), amount_paise=-10000, description="PAGE1"),
+            ParsedRow(date=date(2026, 4, 6), amount_paise=-20000, description="PAGE2"),
+        ],
+    )
+
+    with patch("stow.import_parsers.try_parse_statement_from_tables", return_value=None):
+        with patch(
+            "stow.import_parsers.extract_pdf_page_texts",
+            return_value=["page one", "page two"],
+        ):
+            with patch(
+                "stow.import_parsers._parse_page_batch",
+                new=AsyncMock(return_value=batch_one),
+            ) as mock_parse:
+                result = await parse_statement_pdf(b"%PDF-1.4")
+
+    assert mock_parse.await_count == 1
+    assert len(result.rows) == 2
+    assert {row.description for row in result.rows} == {"PAGE1", "PAGE2"}
+
+
+@pytest.mark.asyncio
+async def test_parse_statement_pdf_odd_page_count_uses_final_single_page_batch():
+    from stow.import_parsers import ParsedPage, parse_statement_pdf
+
+    batch_one = ParsedPage(
+        bank="Axis Bank",
+        statement_from=date(2026, 5, 1),
+        statement_to=date(2026, 5, 31),
+        rows=[ParsedRow(date=date(2026, 5, 10), amount_paise=-50000, description="PAGE1")],
+    )
+    batch_two = ParsedPage(
+        rows=[ParsedRow(date=date(2026, 5, 11), amount_paise=100000, description="PAGE3")],
+    )
+
+    with patch("stow.import_parsers.try_parse_statement_from_tables", return_value=None):
+        with patch(
+            "stow.import_parsers.extract_pdf_page_texts",
+            return_value=["page one", "page two", "page three"],
+        ):
+            with patch(
+                "stow.import_parsers._parse_page_batch",
+                new=AsyncMock(side_effect=[batch_one, batch_two]),
+            ) as mock_parse:
+                result = await parse_statement_pdf(b"%PDF-1.4")
+
+    assert mock_parse.await_count == 2
+    assert len(result.rows) == 2
+    assert {row.description for row in result.rows} == {"PAGE1", "PAGE3"}
 
 
 # ---------------------------------------------------------------------------
@@ -325,17 +525,200 @@ def test_llm_suggestion_used_when_no_rule(session, two_accounts):
     assert row.suggested_account_id == groceries_acc.id  # LLM suggestion kept
 
 
+def test_map_accounts_prefills_miscellaneous_by_flow(session):
+    from stow.seed import seed_account_groups
+
+    seed_account_groups(session)
+
+    expense_misc = session.exec(
+        select(Account)
+        .join(AG, Account.group_id == AG.id)
+        .where(AG.name == "Indirect Expenses")
+        .where(Account.name == "Miscellaneous")
+    ).one()
+    income_misc = session.exec(
+        select(Account)
+        .join(AG, Account.group_id == AG.id)
+        .where(AG.name == "Indirect Income")
+        .where(Account.name == "Miscellaneous")
+    ).one()
+
+    batch = ImportBatch(filename="misc_default.pdf", status="ready")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    debit_row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 1), amount=-50000,
+        description="UNKNOWN DEBIT",
+    )
+    credit_row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 2), amount=25000,
+        description="UNKNOWN CREDIT",
+    )
+    session.add_all([debit_row, credit_row])
+    session.commit()
+
+    map_accounts(session, batch.id)
+    session.refresh(debit_row)
+    session.refresh(credit_row)
+
+    assert debit_row.suggested_account_id == expense_misc.id
+    assert credit_row.suggested_account_id == income_misc.id
+
+
+def test_merchant_rule_applies_tags_on_import(session):
+    from stow.seed import seed_account_groups
+
+    seed_account_groups(session)
+    expense_misc = session.exec(
+        select(Account)
+        .join(AG, Account.group_id == AG.id)
+        .where(AG.name == "Indirect Expenses")
+        .where(Account.name == "Miscellaneous")
+    ).one()
+
+    session.add(MerchantRule(
+        pattern="ZXY_TAGS_TEST*",
+        account_id=expense_misc.id,
+        tags=["food", "delivery"],
+    ))
+    session.commit()
+
+    batch = ImportBatch(filename="tags_test.pdf", status="ready")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 1), amount=-50000,
+        description="ZXY_TAGS_TEST ORDER 123",
+    )
+    session.add(row)
+    session.commit()
+
+    map_accounts(session, batch.id)
+    session.refresh(row)
+
+    assert row.suggested_account_id == expense_misc.id
+    assert row.tags == ["food", "delivery"]
+
+
+def test_apply_merchant_rules_only_defaults_skips_manual_mapping(session, client):
+    from stow.seed import seed_account_groups
+
+    seed_account_groups(session)
+    expense_misc = session.exec(
+        select(Account)
+        .join(AG, Account.group_id == AG.id)
+        .where(AG.name == "Indirect Expenses")
+        .where(Account.name == "Miscellaneous")
+    ).one()
+    groceries_grp = AG(name="GroceriesGrp", nature="expense")
+    session.add(groceries_grp)
+    session.commit()
+    session.refresh(groceries_grp)
+    groceries = Account(name="Groceries", group_id=groceries_grp.id)
+    session.add(groceries)
+    session.commit()
+    session.refresh(groceries)
+    electricity_grp = AG(name="ElectricityGrp", nature="expense")
+    session.add(electricity_grp)
+    session.commit()
+    session.refresh(electricity_grp)
+    electricity = Account(name="Electricity", group_id=electricity_grp.id)
+    session.add(electricity)
+    session.commit()
+    session.refresh(electricity)
+
+    batch = ImportBatch(filename="apply_rules.pdf", status="ready")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    misc_row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 1), amount=-10000,
+        description="ZXY_APPLY_TEST LUNCH",
+        suggested_account_id=expense_misc.id,
+    )
+    manual_row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 2), amount=-20000,
+        description="ZXY_APPLY_TEST DINNER",
+        suggested_account_id=electricity.id,
+    )
+    session.add_all([misc_row, manual_row])
+    session.commit()
+
+    session.add(MerchantRule(pattern="ZXY_APPLY_TEST*", account_id=groceries.id, tags=["food"]))
+    session.commit()
+
+    r = client.post(f"/imports/{batch.id}/apply-merchant-rules", json={"only_defaults": True})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["updated_count"] == 1
+
+    rows_by_desc = {row["description"]: row for row in data["rows"]}
+    assert rows_by_desc["ZXY_APPLY_TEST LUNCH"]["suggested_account_id"] == groceries.id
+    assert rows_by_desc["ZXY_APPLY_TEST LUNCH"]["tags"] == ["food"]
+    assert rows_by_desc["ZXY_APPLY_TEST DINNER"]["suggested_account_id"] == electricity.id
+
+
+def test_apply_merchant_rules_by_rule_id(client, session):
+    from stow.seed import seed_account_groups
+
+    seed_account_groups(session)
+    expense_misc = session.exec(
+        select(Account)
+        .join(AG, Account.group_id == AG.id)
+        .where(AG.name == "Indirect Expenses")
+        .where(Account.name == "Miscellaneous")
+    ).one()
+
+    rule = MerchantRule(pattern="ZXY_RULE_ID", account_id=expense_misc.id, tags=["misc-tag"])
+    session.add(rule)
+    session.commit()
+    session.refresh(rule)
+
+    batch = ImportBatch(filename="rule_id.pdf", status="ready")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    row = StagingRow(
+        batch_id=batch.id, raw_data={},
+        date=date(2026, 5, 1), amount=-10000,
+        description="ZXY_RULE_ID PAYMENT",
+        suggested_account_id=expense_misc.id,
+    )
+    session.add(row)
+    session.commit()
+
+    r = client.post(
+        f"/imports/{batch.id}/apply-merchant-rules",
+        json={"only_defaults": True, "rule_id": rule.id},
+    )
+    assert r.status_code == 200
+    assert r.json()["updated_count"] == 1
+    assert r.json()["rows"][0]["tags"] == ["misc-tag"]
+
+
 # ---------------------------------------------------------------------------
 # Slice 6: GET /imports/{id} and GET /imports/{id}/rows
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def seeded_batch(client, mock_parse_agent):
-    app.dependency_overrides[get_ai_agent] = lambda: mock_parse_agent
+def seeded_batch(client, mock_parsed_statement):
     fake_pdf = io.BytesIO(b"%PDF fake")
-    with patch("stow.routers.imports.extract_pdf_text", return_value="text"):
+    with patch(
+        "stow.routers.imports.parse_statement_pdf",
+        new=AsyncMock(return_value=mock_parsed_statement),
+    ):
         r = client.post("/imports", files={"file": ("stmt.pdf", fake_pdf, "application/pdf")})
-    app.dependency_overrides.pop(get_ai_agent, None)
     return r.json()
 
 
@@ -436,16 +819,120 @@ def test_confirm_batch_posts_transactions(client, seeded_batch, session, fy, ban
     assert data["status"] == "posted"
 
 
+def test_confirm_does_not_post_pending_rows_even_with_account(
+    client, session, fy, bank_account, expense_account
+):
+    """Rows must be status=confirmed in DB; pending + suggested_account_id are skipped."""
+    batch = ImportBatch(filename="pending_ui_only.pdf", status="ready")
+    session.add(batch)
+    session.flush()
+    session.add_all([
+        StagingRow(
+            batch_id=batch.id,
+            raw_data={},
+            date=date(2026, 5, 1),
+            amount=-10000,
+            description="PENDING_WITH_ACCOUNT",
+            suggested_account_id=expense_account.id,
+            status="pending",
+        ),
+        StagingRow(
+            batch_id=batch.id,
+            raw_data={},
+            date=date(2026, 5, 2),
+            amount=-20000,
+            description="CONFIRMED_ROW",
+            suggested_account_id=expense_account.id,
+            status="confirmed",
+        ),
+    ])
+    session.commit()
+
+    r = client.post(
+        f"/imports/{batch.id}/confirm",
+        json={"bank_account_id": bank_account.id, "fy_id": fy.id},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["posted_count"] == 1
+    assert data["skipped_count"] == 0
+
+
+def test_confirm_batch_posts_payment_and_receipt_with_correct_entry_signs(
+    session, fy, bank_account, expense_account
+):
+    from stow.import_pipeline import confirm_batch
+    from stow.models import Entry, ImportBatch, StagingRow, Transaction
+
+    batch = ImportBatch(filename="signs.pdf", status="ready")
+    session.add(batch)
+    session.flush()
+
+    payment = StagingRow(
+        batch_id=batch.id,
+        raw_data={},
+        date=date(2026, 5, 1),
+        amount=-120000,
+        description="SWIGGY PAYMENT",
+        suggested_account_id=expense_account.id,
+        status="confirmed",
+    )
+    receipt = StagingRow(
+        batch_id=batch.id,
+        raw_data={},
+        date=date(2026, 5, 2),
+        amount=500000,
+        description="SALARY CREDIT",
+        suggested_account_id=expense_account.id,
+        status="confirmed",
+    )
+    session.add_all([payment, receipt])
+    session.commit()
+
+    result = confirm_batch(session, batch.id, bank_account.id, fy.id)
+    assert result.posted_count == 2
+
+    txns = session.exec(
+        select(Transaction)
+        .where(Transaction.number.like("IMP-202605%"))
+        .order_by(Transaction.date)
+    ).all()
+    assert len(txns) == 2
+    assert txns[0].type == "payment"
+    assert txns[1].type == "receipt"
+
+    payment_entries = session.exec(
+        select(Entry).where(Entry.transaction_id == txns[0].id)
+    ).all()
+    assert {e.account_id: e.amount for e in payment_entries} == {
+        expense_account.id: 120000,
+        bank_account.id: -120000,
+    }
+
+    receipt_entries = session.exec(
+        select(Entry).where(Entry.transaction_id == txns[1].id)
+    ).all()
+    assert {e.account_id: e.amount for e in receipt_entries} == {
+        bank_account.id: 500000,
+        expense_account.id: -500000,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Slice 10: Merchant rules CRUD — GET/POST/PUT/DELETE /merchant-rules
 # ---------------------------------------------------------------------------
 
 def test_merchant_rules_crud(client, bank_account, expense_account):
     # POST
-    r = client.post("/merchant-rules", json={"pattern": "SWIGGY_CRUD*", "account_id": expense_account.id})
+    r = client.post("/merchant-rules", json={
+        "pattern": "SWIGGY_CRUD*",
+        "account_id": expense_account.id,
+        "tags": ["food"],
+    })
     assert r.status_code == 201
     rule = r.json()
     assert rule["pattern"] == "SWIGGY_CRUD*"
+    assert rule["tags"] == ["food"]
     rule_id = rule["id"]
 
     # GET list
@@ -455,7 +942,11 @@ def test_merchant_rules_crud(client, bank_account, expense_account):
     assert "SWIGGY_CRUD*" in patterns
 
     # PUT
-    r = client.put(f"/merchant-rules/{rule_id}", json={"pattern": "SWIGGY_CRUD_UP*", "account_id": bank_account.id})
+    r = client.put(f"/merchant-rules/{rule_id}", json={
+        "pattern": "SWIGGY_CRUD_UP*",
+        "account_id": bank_account.id,
+        "tags": ["groceries"],
+    })
     assert r.status_code == 200
     assert r.json()["pattern"] == "SWIGGY_CRUD_UP*"
 
@@ -524,20 +1015,18 @@ def test_upload_applies_merchant_rules(session, client, expense_account):
         rows=[
             ParsedRow(
                 date=date(2026, 4, 10),
-                amount_paise=-45000,
+                amount_paise=45000,
+                flow="out",
                 description=f"{unique} ORDER",
             )
         ],
     )
 
-    mock_agent = MagicMock()
-    with patch("stow.routers.imports.parse_statement", new=AsyncMock(return_value=parsed)):
-        with patch("stow.routers.imports.extract_pdf_text", return_value="fake"):
-            with patch("stow.routers.imports.get_ai_agent", return_value=mock_agent):
-                r = client.post(
-                    "/imports",
-                    files={"file": ("stmt.pdf", b"%PDF fake", "application/pdf")},
-                )
+    with patch("stow.routers.imports.parse_statement_pdf", new=AsyncMock(return_value=parsed)):
+        r = client.post(
+            "/imports",
+            files={"file": ("stmt.pdf", b"%PDF fake", "application/pdf")},
+        )
     assert r.status_code == 201
     batch_id = r.json()["id"]
     rows = client.get(f"/imports/{batch_id}/rows").json()

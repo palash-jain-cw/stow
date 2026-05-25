@@ -158,8 +158,7 @@ class TestProposalActions:
         result = await handle_proposal_action(
             "confirm", client, "http://localhost:8000", user_key="session-2"
         )
-        assert result.kind == "agent"
-        assert "no pending transaction" in result.message.lower()
+        assert result.kind == "none"
         client.post.assert_not_called()
 
     @pytest.mark.asyncio

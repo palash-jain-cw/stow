@@ -34,7 +34,7 @@ interface AccountSheetProps {
   account?: AccountOut
   groups: AccountGroup[]
   activeFyId: number | undefined
-  onSaved: () => void
+  onSaved?: (accountId?: number) => void
   /** Pre-select a group when opening the new-account sheet (e.g. Investments). */
   initialGroupId?: number
 }
@@ -219,11 +219,13 @@ export function AccountSheet({
       if (showPriceSource && priceSourceId.trim() !== '') {
         await refreshLivePrice(savedId)
       }
+
+      return savedId
     },
-    onSuccess: () => {
+    onSuccess: (savedId) => {
       qc.invalidateQueries({ queryKey: queryKeys.accounts.list() })
       qc.invalidateQueries({ queryKey: ['portfolio'] })
-      onSaved()
+      onSaved?.(savedId)
       onClose()
     },
     onError: (e: Error) => setError(e.message),

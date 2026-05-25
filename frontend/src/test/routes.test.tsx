@@ -28,6 +28,11 @@ test('/accounts renders Accounts', () => {
   expect(screen.getByRole('heading', { name: /accounts/i })).toBeInTheDocument()
 })
 
+test('/import renders Bank Import wizard', () => {
+  renderAt('/import')
+  expect(screen.getByText('Bank Import')).toBeInTheDocument()
+})
+
 test('/accounts/:id renders AccountDetail', () => {
   renderAt('/accounts/1')
   expect(screen.getByRole('heading', { name: /account detail/i })).toBeInTheDocument()

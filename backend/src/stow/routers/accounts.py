@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, col, select
@@ -186,16 +186,39 @@ def unarchive_account(account_id: int, session: Session = Depends(get_session)):
 
 
 @router.get("/{account_id}/ledger")
-def get_ledger(account_id: int, session: Session = Depends(get_session)):
-    if not session.get(Account, account_id):
+def get_ledger(
+    account_id: int,
+    session: Session = Depends(get_session),
+    fy_id: int = Query(default=None),
+):
+    account = session.get(Account, account_id)
+    if not account:
         raise HTTPException(status_code=404)
-    entries = session.exec(
+    # Resolve financial year: use provided fy_id or active FY
+    if fy_id is None:
+        active_fy = session.exec(
+            select(FinancialYear).where(FinancialYear.status == "active")
+        ).first()
+        if active_fy:
+            fy_id = active_fy.id
+    # Get opening balance for this account in this FY
+    ob = session.exec(
+        select(OpeningBalance)
+        .where(OpeningBalance.account_id == account_id)
+        .where(OpeningBalance.fy_id == fy_id)
+    ).first()
+    opening_balance = ob.amount if ob else 0
+    # Get entries filtered by FY (if resolved)
+    query = (
         select(Entry)
         .where(Entry.account_id == account_id)
         .join(Transaction, col(Transaction.id) == col(Entry.transaction_id))
         .order_by(col(Transaction.date), col(Transaction.id))
-    ).all()
-    running_balance = 0
+    )
+    if fy_id is not None:
+        query = query.where(Transaction.fy_id == fy_id)
+    entries = session.exec(query).all()
+    running_balance = opening_balance
     result = []
     for entry in entries:
         txn = session.get(Transaction, entry.transaction_id)
@@ -207,5 +230,12 @@ def get_ledger(account_id: int, session: Session = Depends(get_session)):
             "narration": txn.narration,
             "amount": entry.amount,
             "running_balance": running_balance,
+            "debit": entry.amount if entry.amount > 0 else 0,
+            "credit": abs(entry.amount) if entry.amount < 0 else 0,
+            "balance": running_balance,
         })
-    return result
+    return {
+        "account_name": account.name,
+        "opening_balance": opening_balance,
+        "entries": list(reversed(result)),
+    }

@@ -54,12 +54,14 @@ _GROUPS: list[tuple[str, str, str | None, int, str | None]] = [
 ]
 
 # (name, group_name)
-_CAPITAL_GAINS_ACCOUNTS: list[tuple[str, str]] = [
+_SEEDED_ACCOUNTS: list[tuple[str, str]] = [
     ("Short Term Capital Gains",        "Capital Gains"),
     ("Long Term Capital Gains",         "Capital Gains"),
     ("Capital Loss",                    "Capital Gains"),
     ("Fixed Deposit Interest Income",   "Indirect Income"),
     ("Depreciation",                    "Indirect Expenses"),
+    ("Miscellaneous",                   "Indirect Expenses"),
+    ("Miscellaneous",                   "Indirect Income"),
 ]
 
 # Versioned equity CGT rules — add a new row when the budget changes; never edit old rows.
@@ -91,13 +93,18 @@ def seed_account_groups(session: Session) -> None:
         session.flush()
         existing[name] = group
 
-    # Capital Gains accounts
-    existing_accounts = {a.name for a in session.exec(select(Account)).all()}
-    for acct_name, group_name in _CAPITAL_GAINS_ACCOUNTS:
-        if acct_name in existing_accounts:
-            continue
+    # Default ledger accounts (name is unique per group, not globally)
+    existing_accounts = {
+        (a.name, a.group_id)
+        for a in session.exec(select(Account)).all()
+    }
+    for acct_name, group_name in _SEEDED_ACCOUNTS:
         group = existing[group_name]
-        session.add(Account(name=acct_name, group_id=group.id or 0))
+        group_id = group.id or 0
+        if (acct_name, group_id) in existing_accounts:
+            continue
+        session.add(Account(name=acct_name, group_id=group_id))
+        existing_accounts.add((acct_name, group_id))
 
     # Versioned tax rules — insert only if that effective_from date is not already present
     existing_rules = {

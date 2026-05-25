@@ -89,9 +89,10 @@ _DEFAULT_API_KEY = "omlx"
 _ROLE_MAX_TOKENS: dict[str, int] = {
     "default": 1024,
     "orchestrator": 1024,
+    "agent": 1024,
     "parse": 512,
-    "import": 4096,
-    "ping": 32,
+    "import": 65536,
+    "ping": 256,
     "report": 2048,
 }
 _DEFAULT_TEMPERATURE = 0.2
