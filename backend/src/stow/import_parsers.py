@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import re
 import traceback
@@ -11,6 +12,7 @@ import pymupdf.layout  # noqa: F401 — enables pymupdf-layout for pymupdf4llm
 import pymupdf4llm
 from pydantic import BaseModel, Field, model_validator
 from pydantic_ai import Agent
+from pydantic_ai.messages import BinaryContent
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +201,10 @@ def _rupees_str_to_paise(value: str) -> int:
     cleaned = value.replace(",", "").strip()
     if not cleaned:
         return 0
-    return round(float(cleaned) * 100)
+    try:
+        return round(float(cleaned) * 100)
+    except ValueError:
+        return 0
 
 
 def _parse_statement_date(value: str) -> date | None:
@@ -495,6 +500,198 @@ def get_import_parser_agent() -> Agent:
     return build_import_parser_agent()
 
 
+# ── Vision-based PDF parsing ──────────────────────────────────────────────
+
+_VISION_FIRST_PAGE_PROMPT = """\
+You are an expert at reading bank statements from images. Below is an image of page 1 \
+of a bank statement. Your job is to extract every transaction row from the visible table.
+
+For each transaction row return:
+- date (DD-MM-YYYY format)
+- description (the narration/particulars text)
+- amount_paise: absolute amount in paise (INR rupees x 100, always positive integer)
+- flow: "out" or "in" from the account holder's perspective:
+  - "out" = money left this bank account (withdrawal, debit, Dr, payment, purchase, UPI/payment sent)
+  - "in" = money entered this account (deposit, credit, Cr, salary, refund, UPI received)
+
+Indian bank statements often label columns Withdrawal/Debit/Dr vs Deposit/Credit/Cr — use those labels.
+
+Also try to identify:
+- bank name (usually at the top)
+- statement period (From: ... To: ...)
+
+Skip opening/closing balance lines and section totals — only real transaction rows.
+You must always return the rows array (use [] if none).
+Respond only with valid JSON matching the required schema.
+"""
+
+_VISION_CONTINUATION_PROMPT = """\
+You are an expert at reading bank statements from images. Below is an image of a \
+continuation page of a bank statement. Parse every transaction row from the visible table.
+
+For each row return date, description, amount_paise (absolute paise, always positive), and flow:
+- "out" = withdrawal / debit / payment leaving the account
+- "in" = deposit / credit / receipt into the account
+
+Skip opening/closing balance lines, footers, legal text, and section totals.
+Return rows only (use [] if these pages have no transactions).
+Respond only with valid JSON matching the required schema.
+"""
+
+
+def _render_pdf_pages_as_images(
+    file_bytes: bytes,
+    dpi: int = 200,
+    max_pages: int = 50,
+) -> list[bytes]:
+    """Render each PDF page as a PNG image (bytes).
+
+    Uses pymupdf (fitz) to rasterize pages at the given DPI.
+    Returns a list of PNG image bytes, one per page.
+    """
+    doc = pymupdf.open(stream=file_bytes, filetype="pdf")
+    try:
+        images: list[bytes] = []
+        for page_num in range(min(len(doc), max_pages)):
+            page = doc[page_num]
+            # Render at specified DPI for good OCR quality
+            pix = page.get_pixmap(dpi=dpi)
+            images.append(pix.tobytes("png"))
+        return images
+    finally:
+        doc.close()
+
+
+def build_vision_parser_agent() -> Agent:
+    """Vision-capable LLM agent for parsing bank statement page images."""
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from stow.ai_config import build_model, model_settings
+
+    # Use the same model config but with a larger token budget for vision input
+    model = build_model()
+    # Ensure the model is configured for vision (max_tokens for image context)
+    settings = model_settings("import")
+
+    return Agent(
+        model,
+        output_type=ParsedPage,
+        system_prompt=_VISION_FIRST_PAGE_PROMPT,
+        output_retries=3,
+    )
+
+
+def build_vision_continuation_agent() -> Agent:
+    """Vision-capable LLM agent for continuation page images."""
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from stow.ai_config import build_model, model_settings
+
+    model = build_model()
+    settings = model_settings("import")
+
+    return Agent(
+        model,
+        output_type=ParsedPage,
+        system_prompt=_VISION_CONTINUATION_PROMPT,
+        output_retries=3,
+    )
+
+
+async def _parse_single_page_image(
+    image_bytes: bytes,
+    *,
+    page_number: int,
+    page_count: int,
+    context: dict[str, str],
+    first_page_agent: Agent | None = None,
+    continuation_agent: Agent | None = None,
+) -> ParsedPage:
+    """Send a single page image to the vision LLM and parse transactions."""
+    from stow.ai_config import model_settings
+
+    agent = first_page_agent if page_number == 1 else continuation_agent
+    if agent is None:
+        if page_number == 1:
+            agent = build_vision_parser_agent()
+        else:
+            agent = build_vision_continuation_agent()
+
+    # BinaryContent takes raw bytes; the provider handles encoding
+    image_part = BinaryContent(
+        data=image_bytes,
+        media_type="image/png",
+    )
+
+    if page_number == 1:
+        prompt_text = "Please parse all transactions from this bank statement page."
+    else:
+        bank_info = f"Bank: {context.get('bank', 'unknown')}. " if context.get('bank') else ""
+        period_info = (
+            f"Statement period: {context.get('statement_from', '?')} to "
+            f"{context.get('statement_to', '?')}. "
+        )
+        prompt_text = (
+            f"This is page {page_number} of {page_count}. {bank_info}{period_info}"
+            f"Please parse all transactions from this bank statement page."
+        )
+
+    # Pass a sequence of UserContent (text + image) as user_prompt
+    user_prompt_parts: list[Any] = [prompt_text, image_part]
+
+    logger.info(
+        "Vision parsing bank statement page %d/%d",
+        page_number,
+        page_count,
+    )
+
+    result = await agent.run(user_prompt_parts, model_settings=model_settings("import"))
+    return result.output
+
+
+async def parse_statement_pdf_vision(
+    file_bytes: bytes,
+    *,
+    dpi: int = 200,
+) -> ParsedStatement:
+    """Parse a bank statement PDF using vision-based LLM (one image per page).
+
+    Renders each PDF page as an image and sends it to a vision-capable LLM
+    for transaction extraction. Pages are processed sequentially, with context
+    (bank name, statement period) carried forward from earlier pages.
+    """
+    images = _render_pdf_pages_as_images(file_bytes, dpi=dpi)
+    if not images:
+        raise ValueError("No pages could be rendered from this PDF")
+
+    page_count = len(images)
+    parsed_pages: list[ParsedPage] = []
+    context: dict[str, str] = {}
+
+    first_agent = build_vision_parser_agent()
+    cont_agent = build_vision_continuation_agent()
+
+    for idx, image_bytes in enumerate(images):
+        page_num = idx + 1
+        page = await _parse_single_page_image(
+            image_bytes,
+            page_number=page_num,
+            page_count=page_count,
+            context=context,
+            first_page_agent=first_agent,
+            continuation_agent=cont_agent,
+        )
+        parsed_pages.append(page)
+        _update_context(context, page)
+
+        # Reset first/continuation agent refs after page 1
+        if page_num == 1:
+            first_agent = None
+            cont_agent = build_vision_continuation_agent()
+
+    return merge_parsed_pages(parsed_pages)
+
+
 def _chunk_page_texts(
     page_texts: list[str],
     batch_size: int = IMPORT_PAGE_BATCH_SIZE,
@@ -592,12 +789,45 @@ async def parse_statement_pdf(
     first_page_agent: Agent | None = None,
     continuation_agent: Agent | None = None,
     page_batch_size: int = IMPORT_PAGE_BATCH_SIZE,
+    *,
+    use_vision: bool | None = None,
+    vision_dpi: int = 200,
 ) -> ParsedStatement:
-    """Parse a bank statement PDF — markdown tables first, then LLM batches."""
+    """Parse a bank statement PDF.
+
+    Strategy (in order):
+      1. Structured markdown table parsing (fastest, no LLM)
+      2. Vision-based LLM parsing — one image per page (recommended)
+      3. Text-based LLM parsing — markdown text batches (fallback)
+    """
+    # Fast path: extract from markdown tables (no LLM needed)
     table_parsed = try_parse_statement_from_tables(file_bytes)
     if table_parsed is not None:
         return table_parsed
 
+    # Determine whether to use vision mode
+    # Default to vision if the configured model name suggests a vision model,
+    # otherwise try vision and fall back to text if it fails.
+    if use_vision is None:
+        from stow.ai_config import read_config
+        cfg = read_config()
+        model_name = (cfg.get("model") or "").lower()
+        use_vision = any(
+            marker in model_name
+            for marker in ("vl", "vision", "instruct", "qwen2.5-vl", "qwen2-vl")
+        )
+
+    if use_vision:
+        try:
+            return await parse_statement_pdf_vision(file_bytes, dpi=vision_dpi)
+        except Exception as exc:
+            logger.warning(
+                "Vision parsing failed, falling back to text-based: %s",
+                exc,
+            )
+            # Fall through to text-based parsing below
+
+    # Fallback: text-based LLM parsing
     page_texts = extract_pdf_page_texts(file_bytes)
     first = first_page_agent or build_import_parser_agent()
     cont = continuation_agent or build_continuation_parser_agent()

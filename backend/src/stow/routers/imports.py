@@ -72,7 +72,7 @@ async def upload_statement(
     try:
         parsed: ParsedStatement = await parse_statement_pdf(
             file_bytes,
-            first_page_agent=get_import_parser_agent(),
+            use_vision=True,  # Use vision-based parsing by default
         )
     except ValueError as exc:
         logger.warning("Import PDF rejected for %s: %s", file.filename, exc)

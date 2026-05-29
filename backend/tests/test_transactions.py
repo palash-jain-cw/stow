@@ -253,3 +253,62 @@ def test_put_date_moves_to_different_fy(client, accounts):
     data = resp.json()
     assert data["fy_id"] == other["id"]
     assert data["number"].startswith("PAY-1993-")
+
+
+# ── Tag filtering ──────────────────────────────────────────────────────────
+
+
+def test_list_transactions_tag_filter(client, accounts):
+    tag = uuid.uuid4().hex[:8]
+    fy = get_or_create_fy(client, "2040-04-01", "2041-03-31")
+    b, e = accounts["bank"]["id"], accounts["expense"]["id"]
+    tagged_payload = make_txn(fy["id"], b, e, date="2040-06-01")
+    tagged_payload["tags"] = ["wife", "personal"]
+    tagged_payload["narration"] = f"Tagged txn {tag}"
+    tagged = _post_txn(client, tagged_payload)
+
+    untagged_payload = make_txn(fy["id"], b, e, date="2040-06-02")
+    untagged_payload["narration"] = f"Untagged txn {tag}"
+    _post_txn(client, untagged_payload)
+
+    resp = client.get(f"/transactions?tags=wife&q={tag}")
+    assert resp.status_code == 200
+    ids = [t["id"] for t in resp.json()]
+    assert tagged["id"] in ids
+    assert len(ids) == 1
+
+
+def test_list_transactions_tag_filter_handles_null_and_scalar_tags(client, session, accounts):
+    from sqlalchemy import text
+
+    tag = uuid.uuid4().hex[:8]
+    fy = get_or_create_fy(client, "2041-04-01", "2042-03-31")
+    b, e = accounts["bank"]["id"], accounts["expense"]["id"]
+
+    tagged_payload = make_txn(fy["id"], b, e, date="2041-06-01")
+    tagged_payload["tags"] = ["dad"]
+    tagged_payload["narration"] = f"Dad tagged {tag}"
+    dad_txn = _post_txn(client, tagged_payload)
+
+    null_payload = make_txn(fy["id"], b, e, date="2041-06-02")
+    null_payload["narration"] = f"Null tags {tag}"
+    null_txn = _post_txn(client, null_payload)
+    session.execute(
+        text("UPDATE transaction SET tags = NULL WHERE id = :id"),
+        {"id": null_txn["id"]},
+    )
+    session.commit()
+
+    scalar_payload = make_txn(fy["id"], b, e, date="2041-06-03")
+    scalar_payload["narration"] = f"Scalar tags {tag}"
+    scalar_txn = _post_txn(client, scalar_payload)
+    session.execute(
+        text("UPDATE transaction SET tags = '\"dad\"'::json WHERE id = :id"),
+        {"id": scalar_txn["id"]},
+    )
+    session.commit()
+
+    resp = client.get(f"/transactions?tags=dad&q={tag}")
+    assert resp.status_code == 200
+    ids = [t["id"] for t in resp.json()]
+    assert ids == [dad_txn["id"]]

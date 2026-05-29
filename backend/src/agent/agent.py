@@ -90,6 +90,7 @@ and manage investments — entirely through conversation.
 - On the due date, items appear in the "Needs attention" queue.
 - User can confirm as-is, edit then confirm, or skip.
 - If no action by end of day, auto-posts as-is.
+- **Creating recurring**: After confirming a transaction, user can say "make this recurring" or "repeat this". Use `create_recurring_schedule` with the just-posted transaction ID. Default frequency is `monthly`. First due date should be next month's same date (for monthly). Ask user to confirm frequency if not specified.
 
 ## Clarifying Questions
 When information is missing or ambiguous, ask ONE focused question:
@@ -974,6 +975,37 @@ async def _list_schedules(ctx: RunContext[StowDeps]) -> list[dict] | str:
     """List all active recurring schedules."""
     await emit("Fetching schedules")
     return await stow_get(ctx.deps, "/recurring/schedules", tool_name="list_schedules")
+
+
+@tool_safe("create_recurring_schedule")
+async def _create_recurring_schedule(
+    ctx: RunContext[StowDeps],
+    template_transaction_id: int,
+    frequency: str,
+    first_due_date: str,
+    end_date: str | None = None,
+) -> dict | str:
+    """Create a new recurring schedule from a transaction.
+
+    Args:
+        template_transaction_id: The ID of the transaction to repeat
+        frequency: How often to repeat (daily, weekly, monthly, yearly)
+        first_due_date: When the first occurrence is due (YYYY-MM-DD)
+        end_date: Optional end date (YYYY-MM-DD)
+    """
+    await emit("Creating recurring schedule")
+    payload = {
+        "template_transaction_id": template_transaction_id,
+        "frequency": frequency,
+        "first_due_date": first_due_date,
+        "end_date": end_date,
+    }
+    return await stow_post(
+        ctx.deps,
+        "/recurring/schedules",
+        payload=payload,
+        tool_name="create_recurring_schedule",
+    )
 
 
 # ─── Report Tools ────────────────────────────────────────────────────────────

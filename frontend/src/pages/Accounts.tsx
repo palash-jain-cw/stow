@@ -68,6 +68,21 @@ interface LedgerRow {
 const DEFAULT_GROUPS = ["Bank Accounts", "Cash-in-Hand", "Investments"];
 const SEE_MORE_KEY = "stow.accounts.seeMore";
 
+function transactionsFilterQuery(account: AccountOut): string {
+	const params = new URLSearchParams();
+	if (account.nature === "income" || account.nature === "expense") {
+		params.set("category_account_id", String(account.id));
+	} else if (
+		account.group_name === "Bank Accounts" ||
+		account.group_name === "Cash-in-Hand"
+	) {
+		params.set("bank_account_id", String(account.id));
+	} else {
+		params.set("account_id", String(account.id));
+	}
+	return params.toString();
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const NATURE_CHIP: Record<string, { bg: string; text: string }> = {
@@ -411,11 +426,18 @@ export default function Accounts() {
 								{/* Actions */}
 								<div className="flex items-center gap-3">
 									<Link
-										to={`/transactions?account_id=${selectedAccount.id}`}
+										to={`/transactions?${transactionsFilterQuery(selectedAccount)}`}
 										className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
 									>
 										<ExternalLink className="w-4 h-4" />
 										Transactions
+									</Link>
+									<Link
+										to={`/transactions?${transactionsFilterQuery(selectedAccount)}&new=1`}
+										className="flex items-center gap-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium px-3 py-1.5 rounded-lg transition-colors"
+									>
+										<Plus className="w-4 h-4" />
+										New
 									</Link>
 									<button
 										onClick={() => {

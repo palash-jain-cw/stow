@@ -1043,3 +1043,24 @@ def test_match_bank_account_helper():
     matched = match_bank_account(accounts, "Union Bank of India")
     assert matched is not None
     assert matched["id"] == 1
+
+
+def test_render_pdf_pages_as_images():
+    """Verify PDF pages render as PNG images for vision parsing."""
+    import pymupdf
+    from stow.import_parsers import _render_pdf_pages_as_images
+
+    # Create a 3-page test PDF
+    doc = pymupdf.open()
+    for i in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72 + i * 100), f"Page {i + 1}", fontsize=14)
+    doc_bytes = doc.tobytes()
+    doc.close()
+
+    images = _render_pdf_pages_as_images(doc_bytes)
+    assert len(images) == 3
+    for img in images:
+        # Verify PNG format
+        assert img[:8] == b"\x89PNG\r\n\x1a\n"
+        assert len(img) > 1000  # Reasonable image size

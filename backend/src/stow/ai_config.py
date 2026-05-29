@@ -87,13 +87,14 @@ _DEFAULT_API_KEY = "omlx"
 # Local LLM harness — cap generation so a single run cannot fill the context window.
 # Override default cap with STOW_LLM_MAX_TOKENS (roles via build_model).
 _ROLE_MAX_TOKENS: dict[str, int] = {
-    "default": 2048,
-    "agent": 4096,
-    "parse": 1024,
+    "default": 8192,
+    "agent": 16384,
+    "parse": 4096,
     "import": 65536,
     "ping": 512,
-    "report": 4096,
-    "tool_response": 2048,
+    "report": 8192,
+    "tool_response": 4096,
+    "orchestrator": 16384,
 }
 _DEFAULT_TEMPERATURE = 0.3
 

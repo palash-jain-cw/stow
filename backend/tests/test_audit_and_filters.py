@@ -73,6 +73,46 @@ def test_filter_by_account(client, ctx):
     assert len(resp.json()) == 1
 
 
+def test_filter_by_bank_and_category_accounts(client, ctx):
+    tag = ctx["tag"]
+    txn_a = _post(client, ctx, narration=f"Expense A {tag}")
+    other_expense = get_or_create_account(
+        client, f"Other Audit Expense {tag}", f"Audit Expenses {tag}"
+    )
+    resp = client.post(
+        "/transactions",
+        json={
+            "type": "payment",
+            "date": f"{ctx['year']}-06-02",
+            "narration": f"Expense B {tag}",
+            "fy_id": ctx["fy"]["id"],
+            "entries": [
+                {"account_id": other_expense["id"], "amount": 20000},
+                {"account_id": ctx["bank"]["id"], "amount": -20000},
+            ],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    bank_only = client.get(
+        f"/transactions?bank_account_id={ctx['bank']['id']}&q={tag}"
+    ).json()
+    assert len(bank_only) == 2
+
+    category_only = client.get(
+        f"/transactions?category_account_id={ctx['expense']['id']}&q={tag}"
+    ).json()
+    assert len(category_only) == 1
+    assert category_only[0]["id"] == txn_a["id"]
+
+    both = client.get(
+        f"/transactions?bank_account_id={ctx['bank']['id']}"
+        f"&category_account_id={ctx['expense']['id']}&q={tag}"
+    ).json()
+    assert len(both) == 1
+    assert both[0]["id"] == txn_a["id"]
+
+
 def test_filter_by_narration(client, ctx):
     tag = ctx["tag"]
     _post(client, ctx, narration=f"Electricity bill {tag}")

@@ -1,16 +1,40 @@
 from __future__ import annotations
 
+import logging
+import traceback
 from datetime import date as _date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import bindparam, or_, text
 from sqlmodel import Session, col, select
 from stow.db import get_session
 from stow.fy_resolution import FyResolutionError, raise_http_from_fy_error, resolve_fy_for_posting
 from stow.models import Account, CapitalGainEntry, Entry, FdMetadata, FinancialYear, Lot, Transaction, TransactionAuditLog
 from stow.transaction_numbers import next_transaction_number
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+_TAG_ARRAY_SQL = (
+    "CASE WHEN jsonb_typeof(transaction.tags::jsonb) = 'array' "
+    "THEN transaction.tags::jsonb ELSE '[]'::jsonb END"
+)
+
+
+def _transaction_has_tag(tag: str, param_name: str):
+    """Match tag in a JSON array; null/scalar tags are treated as no tags."""
+    return text(
+        "EXISTS ("
+        "  SELECT 1 FROM jsonb_array_elements_text(" + _TAG_ARRAY_SQL + ") AS elem "
+        "  WHERE elem = :" + param_name +
+        ")"
+    ).bindparams(bindparam(param_name, tag))
+
+
+def _txn_ids_for_account(account_id: int):
+    return select(Entry.transaction_id).where(Entry.account_id == account_id)
 
 
 class EntryIn(BaseModel):
@@ -132,9 +156,12 @@ def _get_txn_with_entries(txn_id: int, session: Session) -> TransactionOut:
 def list_transactions(
     type: Optional[str] = None,
     account_id: Optional[int] = None,
+    bank_account_id: Optional[int] = None,
+    category_account_id: Optional[int] = None,
     q: Optional[str] = None,
     from_date: Optional[_date] = None,
     to_date: Optional[_date] = None,
+    tags: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
     stmt = select(Transaction)
@@ -147,10 +174,26 @@ def list_transactions(
     if to_date:
         stmt = stmt.where(Transaction.date <= to_date)
     if account_id:
-        stmt = stmt.join(Entry, col(Entry.transaction_id) == col(Transaction.id)).where(
-            Entry.account_id == account_id
-        )
-    txns = session.exec(stmt).all()
+        stmt = stmt.where(col(Transaction.id).in_(_txn_ids_for_account(account_id)))
+    if bank_account_id:
+        logger.info("Filtering transactions by bank_account_id=%s", bank_account_id)
+        stmt = stmt.where(col(Transaction.id).in_(_txn_ids_for_account(bank_account_id)))
+    if category_account_id:
+        logger.info("Filtering transactions by category_account_id=%s", category_account_id)
+        stmt = stmt.where(col(Transaction.id).in_(_txn_ids_for_account(category_account_id)))
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        if tag_list:
+            logger.info("Filtering transactions by tags: %s", tag_list)
+            tag_conds = [
+                _transaction_has_tag(t, f"tag_{i}") for i, t in enumerate(tag_list)
+            ]
+            stmt = stmt.where(or_(*tag_conds))
+    try:
+        txns = session.exec(stmt).all()
+    except Exception:
+        logger.exception("Failed to list transactions: %s", traceback.format_exc())
+        raise
     result = []
     for txn in txns:
         txn_entries = session.exec(select(Entry).where(Entry.transaction_id == txn.id)).all()

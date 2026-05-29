@@ -9,7 +9,7 @@ import traceback
 
 import httpx
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic_ai.messages import BinaryContent, ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse, TextPart
 
 from agent.activity import _progress_queue
 from agent.deps import StowDeps
@@ -28,6 +28,36 @@ logger = logging.getLogger(__name__)
 _IMPORT_BATCH_RE = re.compile(r"^\[IMPORT_BATCH:(\d+):")
 _IMPORT_CONTINUATION_PREFIX = "[IMPORT_CONTINUATION:batch_id="
 _IMPORT_DONE_PREFIX = "IMPORT_DONE:"
+_EMPTY_OUTPUT_FALLBACK = (
+    "I'm having trouble forming a response. Could you try rephrasing that?"
+)
+
+
+def _resolve_agent_output(result) -> str:
+    """Return agent text, falling back to the last model response if output is empty."""
+    output = str(result.output or "").strip()
+    if output:
+        return output
+
+    for msg in reversed(result.all_messages()):
+        if not isinstance(msg, ModelResponse):
+            continue
+        parts: list[str] = []
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                parts.append(part.content)
+            elif hasattr(part, "content") and isinstance(part.content, str):
+                parts.append(part.content)
+        text = "".join(parts).strip()
+        if text:
+            logger.warning(
+                "Agent result.output empty; using last ModelResponse text (%d chars)",
+                len(text),
+            )
+            return text
+
+    logger.warning("Agent returned empty output with no fallback text")
+    return ""
 
 
 def _build_prompt(data: dict) -> str | list:
@@ -202,26 +232,27 @@ async def handle_websocket(websocket: WebSocket) -> None:
                         message_history=message_history,
                         model_settings=model_settings("orchestrator"),
                     )
-                    output = str(result.output).strip()
-                    if output:
-                        output, import_done_id = _strip_import_done(output)
-                        if import_done_id is not None:
-                            logger.info(
-                                "Import chat session complete for batch_id=%s",
-                                import_done_id,
+                    output = _resolve_agent_output(result)
+                    if not output:
+                        output = _EMPTY_OUTPUT_FALLBACK
+                    output, import_done_id = _strip_import_done(output)
+                    if import_done_id is not None:
+                        logger.info(
+                            "Import chat session complete for batch_id=%s",
+                            import_done_id,
+                        )
+                        active_import_batch_id = None
+                    proposal, _ = parse_proposal(output)
+                    if proposal is not None:
+                        try:
+                            normalize_proposal(proposal)
+                            store_pending(session_key, proposal)
+                        except ValueError:
+                            logger.warning(
+                                "Orchestrator returned incomplete proposal: %s", proposal
                             )
-                            active_import_batch_id = None
-                        proposal, _ = parse_proposal(output)
-                        if proposal is not None:
-                            try:
-                                normalize_proposal(proposal)
-                                store_pending(session_key, proposal)
-                            except ValueError:
-                                logger.warning(
-                                    "Orchestrator returned incomplete proposal: %s", proposal
-                                )
-                        if output:
-                            await websocket.send_json({"type": "token", "content": output})
+                    if output:
+                        await websocket.send_json({"type": "token", "content": output})
                     message_history = trim_message_history(result.all_messages())
                 except Exception as exc:
                     logger.exception("WebSocket orchestrator failed")
