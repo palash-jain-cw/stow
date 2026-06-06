@@ -138,3 +138,17 @@ def lock_financial_year(fy_id: int, session: Session = Depends(get_session)):
     session.commit()
     session.refresh(fy)
     return fy
+
+
+@router.post("/{fy_id}/unlock", response_model=FinancialYear)
+def unlock_financial_year(fy_id: int, session: Session = Depends(get_session)):
+    fy = session.get(FinancialYear, fy_id)
+    if not fy:
+        raise HTTPException(status_code=404)
+    if fy.status != "locked":
+        raise HTTPException(status_code=409, detail="Financial year is not locked")
+    fy.status = "active"
+    fy.net_profit = None
+    session.commit()
+    session.refresh(fy)
+    return fy

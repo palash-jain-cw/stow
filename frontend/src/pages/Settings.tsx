@@ -164,6 +164,7 @@ function FinancialYearsPanel() {
   const [showNewFy, setShowNewFy] = useState(false)
   const [openingBalancesFy, setOpeningBalancesFy] = useState<FinancialYear | null>(null)
   const [lockFy, setLockFy] = useState<FinancialYear | null>(null)
+  const [unlockFy, setUnlockFy] = useState<FinancialYear | null>(null)
   const [repairPreview, setRepairPreview] = useState<{
     moved: number
     dry_run: boolean
@@ -285,12 +286,20 @@ function FinancialYearsPanel() {
                 </>
               )}
               {fy.status === 'locked' && (
-                <Link
-                  to={`/reports?tab=pl&fy=${fy.id}`}
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  View reports →
-                </Link>
+                <>
+                  <button
+                    onClick={() => setUnlockFy(fy)}
+                    className="px-3 py-1 text-xs border border-zinc-200 rounded-lg text-zinc-600 hover:bg-zinc-50"
+                  >
+                    Unlock year
+                  </button>
+                  <Link
+                    to={`/reports?tab=pl&fy=${fy.id}`}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    View reports →
+                  </Link>
+                </>
               )}
             </div>
           </div>
@@ -386,6 +395,14 @@ function FinancialYearsPanel() {
       {lockFy && (
         <LockYearModal fy={lockFy} onClose={() => setLockFy(null)} onLocked={() => {
           setLockFy(null)
+          qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
+        }} />
+      )}
+
+      {/* Unlock year modal */}
+      {unlockFy && (
+        <UnlockYearModal fy={unlockFy} onClose={() => setUnlockFy(null)} onUnlocked={() => {
+          setUnlockFy(null)
           qc.invalidateQueries({ queryKey: queryKeys.financialYears.all() })
         }} />
       )}
@@ -554,6 +571,34 @@ function LockYearModal({ fy, onClose, onLocked }: {
         onConfirm={lock}
         confirmLabel="Lock year"
         danger
+      />
+    </Modal>
+  )
+}
+
+// ── Unlock Year modal ─────────────────────────────────────────────────────────
+
+function UnlockYearModal({ fy, onClose, onUnlocked }: {
+  fy: FinancialYear; onClose: () => void; onUnlocked: () => void
+}) {
+  const unlock = async () => {
+    await api.post(`/financial-years/${fy.id}/unlock`, {})
+    onUnlocked()
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Unlock ${fyLabel(fy)}?`}>
+      <p className="text-sm text-zinc-600 mb-3">
+        This will revert <strong>{fyLabel(fy)}</strong> to active status, clear the recorded net profit,
+        and allow new transactions to be posted.
+      </p>
+      <p className="text-xs text-zinc-400">
+        You can re-lock the year at any time — net profit will be recalculated from scratch.
+      </p>
+      <ModalActions
+        onCancel={onClose}
+        onConfirm={unlock}
+        confirmLabel="Unlock year"
       />
     </Modal>
   )
