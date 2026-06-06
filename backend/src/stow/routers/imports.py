@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import traceback
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from sqlmodel import Session, select
@@ -63,6 +63,7 @@ class StagingRowOut(BaseModel):
 @router.post("", status_code=201, response_model=BatchOut)
 async def upload_statement(
     file: UploadFile,
+    password: str | None = Form(None),
     session: Session = Depends(get_session),
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -72,7 +73,7 @@ async def upload_statement(
     try:
         parsed: ParsedStatement = await parse_statement_pdf(
             file_bytes,
-            use_vision=True,  # Use vision-based parsing by default
+            password=password or None,
         )
     except ValueError as exc:
         logger.warning("Import PDF rejected for %s: %s", file.filename, exc)

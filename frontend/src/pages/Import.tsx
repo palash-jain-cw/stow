@@ -312,6 +312,7 @@ export default function Import() {
 	const [step, setStep] = useState<Step>(1);
 	const [bankAccountId, setBankAccountId] = useState<number | "">("");
 	const [file, setFile] = useState<File | null>(null);
+	const [password, setPassword] = useState("");
 	const [uploading, setUploading] = useState(false);
 	const [parseStatusIdx, setParseStatusIdx] = useState(0);
 	const [uploadError, setUploadError] = useState<string | null>(null);
@@ -404,6 +405,7 @@ export default function Import() {
 		try {
 			const fd = new FormData();
 			fd.append("file", file);
+			if (password) fd.append("password", password);
 			const result = await api.upload<BatchOut>("/imports", fd);
 
 			clearInterval(parseTimerRef.current!);
@@ -896,6 +898,7 @@ export default function Import() {
 		setStep(1);
 		setBankAccountId("");
 		setFile(null);
+		setPassword("");
 		setUploading(false);
 		setParseStatusIdx(0);
 		setUploadError(null);
@@ -1007,6 +1010,26 @@ export default function Import() {
 								>
 									<X className="w-4 h-4" />
 								</button>
+							</div>
+						)}
+
+						{/* Password input */}
+						{file && !uploading && (
+							<div>
+								<label className="block text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
+									Password{" "}
+									<span className="normal-case font-normal text-zinc-400">
+										(if protected)
+									</span>
+								</label>
+								<input
+									type="password"
+									value={password}
+									onChange={(e) => setPassword(e.target.value)}
+									placeholder="Leave blank if not password-protected"
+									className={inputCls}
+									autoComplete="off"
+								/>
 							</div>
 						)}
 

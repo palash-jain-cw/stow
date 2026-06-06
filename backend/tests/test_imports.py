@@ -318,58 +318,6 @@ def test_parsed_row_legacy_signed_amount_infers_flow():
     assert in_row.signed_amount_paise == 500000
 
 
-def test_parse_markdown_debit_credit_table():
-    from stow.import_parsers import _parse_debit_credit_table
-
-    table = [
-        ["Tran Date", "Chq No", "Particulars", "Debit", "Credit", "Balance", "Init. Br"],
-        ["", "", "OPENING BALANCE", "", "", "1705.97", ""],
-        ["22-05-2026", "", "UPI/P2A/614217772364/Mr MANOJ /CBIN/UPI/", "", "10000.00", "11705.97", "521"],
-        ["23-05-2026", "", "UPI/P2A/123566665387/SHIVAPUTRA", "15.00", "", "11690.97", "521"],
-        ["", "", "TRANSACTION TOTAL", "15.00", "10000.00", "", ""],
-    ]
-    rows, schema = _parse_debit_credit_table(table)
-    assert len(rows) == 2
-    assert rows[0].flow == "in"
-    assert rows[0].amount_paise == 1_000_000
-    assert rows[1].flow == "out"
-    assert rows[1].amount_paise == 1500
-    assert schema is not None
-
-    continuation = [
-        ["24-05-2026", "", "UPI/P2M/809958567940/Dominos Pizza", "410.05", "", "9951.92", "521"],
-        ["TRANSACTION TOTAL", "1017203.26", "1005315.77"],
-    ]
-    cont_rows, _ = _parse_debit_credit_table(continuation, schema)
-    assert len(cont_rows) == 1
-    assert cont_rows[0].flow == "out"
-    assert cont_rows[0].amount_paise == 41005
-
-
-def test_try_parse_statement_from_tables_axis_sample():
-    from stow.import_parsers import try_parse_statement_from_tables
-
-    markdown = """
-**Statement of Axis Account No: 916010024744783 for the period (From: 22-05-2026  To: 23-05-2026)**
-
-|Tran Date|Chq No|Particulars|Debit|Credit|Balance|Init.<br>Br|
-|---|---|---|---|---|---|---|
-|||**OPENING BALANCE**|||**1705.97**||
-|22-05-2026||UPI/P2A/614217772364/Mr MANOJ /CBIN/UPI/||10000.00|11705.97|521|
-|23-05-2026||UPI/P2A/123566665387/SHIVAPUTRA|15.00||11690.97|521|
-"""
-    with patch(
-        "stow.import_parsers.extract_pdf_page_chunks",
-        return_value=[{"text": markdown, "metadata": {"page_number": 1}}],
-    ):
-        parsed = try_parse_statement_from_tables(b"%PDF fake")
-
-    assert parsed is not None
-    assert parsed.bank == "Axis Bank"
-    assert len(parsed.rows) == 2
-    assert parsed.rows[0].signed_amount_paise == 1_000_000
-    assert parsed.rows[1].signed_amount_paise == -1500
-
 
 def test_merge_parsed_pages_combines_rows_and_metadata():
     from stow.import_parsers import ParsedPage, merge_parsed_pages
@@ -392,63 +340,34 @@ def test_merge_parsed_pages_combines_rows_and_metadata():
 
 
 @pytest.mark.asyncio
-async def test_parse_statement_pdf_batches_two_pages_per_llm_call():
-    from stow.import_parsers import ParsedPage, parse_statement_pdf
+async def test_parse_statement_pdf_runs_all_pages_in_parallel():
+    from unittest.mock import MagicMock
+    from stow.import_parsers import ParsedContinuationPage, ParsedStatement, parse_statement_pdf
 
-    batch_one = ParsedPage(
+    first_out = ParsedStatement(
         bank="HDFC Bank",
         statement_from=date(2026, 4, 1),
         statement_to=date(2026, 4, 30),
-        rows=[
-            ParsedRow(date=date(2026, 4, 5), amount_paise=-10000, description="PAGE1"),
-            ParsedRow(date=date(2026, 4, 6), amount_paise=-20000, description="PAGE2"),
-        ],
+        rows=[ParsedRow(date=date(2026, 4, 5), amount_paise=10000, flow="out", description="PAGE1")],
+    )
+    cont_out = ParsedContinuationPage(
+        rows=[ParsedRow(date=date(2026, 4, 6), amount_paise=20000, flow="out", description="PAGE2")],
     )
 
-    with patch("stow.import_parsers.try_parse_statement_from_tables", return_value=None):
-        with patch(
-            "stow.import_parsers.extract_pdf_page_texts",
-            return_value=["page one", "page two"],
-        ):
-            with patch(
-                "stow.import_parsers._parse_page_batch",
-                new=AsyncMock(return_value=batch_one),
-            ) as mock_parse:
-                result = await parse_statement_pdf(b"%PDF-1.4")
+    first_agent = MagicMock()
+    first_agent.run = AsyncMock(return_value=MagicMock(output=first_out))
+    cont_agent = MagicMock()
+    cont_agent.run = AsyncMock(return_value=MagicMock(output=cont_out))
 
-    assert mock_parse.await_count == 1
+    with patch("stow.import_parsers.extract_pdf_page_texts", return_value=["page one", "page two"]):
+        with patch("stow.ai_config.model_settings", return_value={}):
+            result = await parse_statement_pdf(b"%PDF-1.4", first_agent, cont_agent)
+
+    assert first_agent.run.await_count == 1
+    assert cont_agent.run.await_count == 1
+    assert result.bank == "HDFC Bank"
     assert len(result.rows) == 2
-    assert {row.description for row in result.rows} == {"PAGE1", "PAGE2"}
-
-
-@pytest.mark.asyncio
-async def test_parse_statement_pdf_odd_page_count_uses_final_single_page_batch():
-    from stow.import_parsers import ParsedPage, parse_statement_pdf
-
-    batch_one = ParsedPage(
-        bank="Axis Bank",
-        statement_from=date(2026, 5, 1),
-        statement_to=date(2026, 5, 31),
-        rows=[ParsedRow(date=date(2026, 5, 10), amount_paise=-50000, description="PAGE1")],
-    )
-    batch_two = ParsedPage(
-        rows=[ParsedRow(date=date(2026, 5, 11), amount_paise=100000, description="PAGE3")],
-    )
-
-    with patch("stow.import_parsers.try_parse_statement_from_tables", return_value=None):
-        with patch(
-            "stow.import_parsers.extract_pdf_page_texts",
-            return_value=["page one", "page two", "page three"],
-        ):
-            with patch(
-                "stow.import_parsers._parse_page_batch",
-                new=AsyncMock(side_effect=[batch_one, batch_two]),
-            ) as mock_parse:
-                result = await parse_statement_pdf(b"%PDF-1.4")
-
-    assert mock_parse.await_count == 2
-    assert len(result.rows) == 2
-    assert {row.description for row in result.rows} == {"PAGE1", "PAGE3"}
+    assert {r.description for r in result.rows} == {"PAGE1", "PAGE2"}
 
 
 # ---------------------------------------------------------------------------
