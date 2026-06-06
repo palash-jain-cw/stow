@@ -18,25 +18,24 @@ logger = logging.getLogger(__name__)
 class ParsedRow(BaseModel):
     date: date
     amount_paise: int = Field(
-        description="Absolute transaction amount in paise (always a positive integer).",
-    )
-    flow: Literal["out", "in"] | None = Field(
-        default=None,
         description=(
-            "'out' = money left the bank account (withdrawal, debit, Dr, payment, UPI send); "
-            "'in' = money entered the account (deposit, credit, Cr, salary, refund received)."
+            "Transaction amount in paise (INR × 100). "
+            "NEGATIVE when money leaves the account (debit/withdrawal/payment). "
+            "POSITIVE when money enters (credit/deposit/received)."
         ),
     )
+    flow: Literal["out", "in"] | None = Field(default=None, exclude=True)
     description: str
 
     @model_validator(mode="after")
-    def normalize_flow_and_amount(self) -> ParsedRow:
-        """Accept legacy signed amount_paise from older parser output."""
+    def infer_flow_from_sign(self) -> ParsedRow:
         if self.flow is not None:
+            # Explicit flow (Python callers / fixtures): trust it, ensure positive amount.
             if self.amount_paise == 0:
                 raise ValueError("amount_paise must be non-zero")
             self.amount_paise = abs(self.amount_paise)
             return self
+        # LLM output: flow is absent, infer direction from the sign of amount_paise.
         if self.amount_paise < 0:
             self.flow = "out"
             self.amount_paise = abs(self.amount_paise)
@@ -85,42 +84,38 @@ class ParsedContinuationPage(BaseModel):
 
 
 _FIRST_PAGE_PROMPT = """\
-You are a bank statement parser. Given markdown extracted from the first one or two pages of a bank \
+You are a bank statement parser. Given markdown extracted from the first page(s) of an Indian bank \
 statement PDF (tables are preserved as markdown pipe tables), identify the bank name and statement \
-period (usually on page 1) and parse every transaction row across all pages in this batch.
+period and parse every transaction row.
 
 For each transaction row return:
 - date
 - description (as shown on the statement)
-- amount_paise: absolute amount in paise (INR rupees × 100, always positive)
-- flow: "out" or "in" from the account holder's perspective:
-  - "out" = money left this bank account (withdrawal, debit, Dr, payment, purchase, UPI/payment sent)
-  - "in" = money entered this bank account (deposit, credit, Cr, salary, refund, UPI received)
+- amount_paise: the transaction amount in paise (INR × 100).
+  Use a NEGATIVE number when money LEFT the account (Debit / Withdrawal / Dr / payment sent / UPI out).
+  Use a POSITIVE number when money ENTERED the account (Credit / Deposit / Cr / received / refund).
 
-Indian bank statements often label columns Withdrawal/Debit/Dr vs Deposit/Credit/Cr — use those labels, \
-not double-entry bookkeeping sign conventions.
-
-Some banks pack multiple rows into a single table cell separated by line breaks — treat each \
-line-break-separated value as an independent transaction row.
-
-Skip opening/closing balance lines and section totals — only real transaction rows.
-You must always return the rows array with every transaction found in this batch (use [] if none).
+Rules:
+- If the statement has separate Debit and Credit columns, the Debit column → negative, Credit column → positive.
+- If the statement has a single signed Amount column, preserve its sign.
+- Some banks pack multiple rows into one table cell using line breaks — treat each as a separate transaction.
+- Skip opening/closing balance lines and section totals.
+- Return rows: [] if no transactions appear on this page.
 Respond only with valid JSON matching the required schema.
 """
 
 _CONTINUATION_PAGE_PROMPT = """\
-You are a bank statement parser. Given markdown extracted from one or two continuation pages of a bank \
-statement (tables are preserved as markdown pipe tables), parse every transaction row in this batch.
+You are a bank statement parser. Given markdown extracted from continuation page(s) of an Indian bank \
+statement PDF, parse every transaction row.
 
-For each row return date, description, amount_paise (absolute paise, always positive), and flow:
-- "out" = withdrawal / debit / payment leaving the account
-- "in" = deposit / credit / receipt into the account
+For each row return date, description, and amount_paise (paise = INR × 100):
+- NEGATIVE when money LEFT the account (Debit / Withdrawal / Dr / payment sent)
+- POSITIVE when money ENTERED the account (Credit / Deposit / Cr / received / refund)
 
-Some banks pack multiple rows into a single table cell separated by line breaks — treat each \
-line-break-separated value as an independent transaction row.
-
-Skip opening/closing balance lines, footers, legal text, and section totals.
-Return rows only (use [] if these pages have no transactions).
+If the statement has separate Debit and Credit columns, Debit → negative, Credit → positive.
+Some banks pack multiple rows per cell using line breaks — treat each as a separate transaction.
+Skip balance lines, footers, and section totals.
+Return rows: [] if no transactions appear on this page.
 Respond only with valid JSON matching the required schema.
 """
 
