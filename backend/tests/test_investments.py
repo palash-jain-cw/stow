@@ -90,14 +90,14 @@ def test_buy_posts_balanced_transaction(client, inv):
 
     txn_id = lot["transaction_id"]
     ledger = client.get(f"/accounts/{mf_id}/ledger?fy_id={fy['id']}").json()
-    txn_entry = next(e for e in ledger if e["transaction_id"] == txn_id)
+    txn_entry = next(e for e in ledger["entries"] if e["transaction_id"] == txn_id)
 
     # total cost = 10_000 milliunits * 100 paise/milliunit / 1000 = 1_000 paise
     assert txn_entry["amount"] == 1_000
     assert txn_entry["running_balance"] == 1_000
 
     bank_ledger = client.get(f"/accounts/{bank_id}/ledger?fy_id={fy['id']}").json()
-    bank_entry = next(e for e in bank_ledger if e["transaction_id"] == txn_id)
+    bank_entry = next(e for e in bank_ledger["entries"] if e["transaction_id"] == txn_id)
     assert bank_entry["amount"] == -1_000
 
 

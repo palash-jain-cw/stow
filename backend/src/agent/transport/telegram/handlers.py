@@ -9,8 +9,8 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlmodel import Session, select
 
-from agent.transport.proposal import parse_proposal
-from agent.transport.telegram.keyboard import confirm_decline_keyboard
+from agent.transport.proposal import parse_proposals, store_pending, normalize_proposal, handle_proposal_action
+from agent.transport.telegram.keyboard import batch_confirm_decline_keyboard, confirm_decline_keyboard
 from agent.history import trim_message_history
 from stow.ai_config import model_settings
 from stow.db import engine
@@ -70,23 +70,6 @@ def _get_orchestrator_runner() -> Callable:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 base_url = StowDeps.build().base_url
-
-                if prompt.startswith("cfm:"):
-                    from agent.transport.proposal import confirm_pending_proposal
-
-                    action = await confirm_pending_proposal(
-                        user_key, prompt[4:], client, base_url
-                    )
-                    if action.kind == "agent":
-                        return await _run_orchestrator(action.message, user_id, message)
-                    return action.message
-
-                if prompt.startswith("dec:"):
-                    from agent.transport.proposal import decline_pending_proposal
-
-                    return decline_pending_proposal(user_key, prompt[4:])
-
-                from agent.transport.proposal import handle_proposal_action
 
                 action = await handle_proposal_action(
                     prompt, client, base_url, user_key=user_key
@@ -264,7 +247,7 @@ def _md_to_telegram(text: str) -> tuple[str, list]:
     from aiogram.types import MessageEntity
     from telegramify_markdown import convert
 
-    # Strip PROPOSAL: lines (handled separately as keyboard)
+    # Strip all PROPOSAL: lines (handled separately as keyboard)
     lines = [l for l in text.splitlines() if not l.startswith("PROPOSAL:")]
     text = "\n".join(lines)
 
@@ -289,22 +272,27 @@ def _md_to_telegram(text: str) -> tuple[str, list]:
 
 async def _send_reply(message: Message, text: str, user_id: int) -> None:
     """Send reply, attaching an inline keyboard when the response is a proposal."""
-    from agent.transport.proposal import normalize_proposal, store_pending
-
-    proposal, display = parse_proposal(text)
+    proposals, display = parse_proposals(text)
     body = display or text
     plain_text, entities = _md_to_telegram(body)
-    if proposal:
+
+    if proposals:
         try:
-            normalize_proposal(proposal)
-            proposal_id = store_pending(str(user_id), proposal)
-            keyboard = confirm_decline_keyboard(
-                confirm_data=f"cfm:{proposal_id}",
-                decline_data=f"dec:{proposal_id}",
-            )
+            proposal_ids: list[str] = []
+            for proposal in proposals:
+                normalize_proposal(proposal)
+                proposal_ids.append(store_pending(str(user_id), proposal))
+
+            if len(proposal_ids) == 1:
+                keyboard = confirm_decline_keyboard(
+                    confirm_data=f"cfm:{proposal_ids[0]}",
+                    decline_data=f"dec:{proposal_ids[0]}",
+                )
+            else:
+                keyboard = batch_confirm_decline_keyboard(proposal_ids)
             await message.answer(plain_text, reply_markup=keyboard, entities=entities)  # type: ignore[arg-type]
         except ValueError:
-            logger.warning("Skipping confirm buttons for invalid proposal: %s", proposal)
+            logger.warning("Skipping confirm buttons for invalid proposal: %s", proposals)
             await message.answer(
                 plain_text + "\n\n⚠️ Proposal was incomplete — please describe the transaction again.",
                 entities=entities,  # type: ignore[arg-type]

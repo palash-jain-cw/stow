@@ -54,23 +54,25 @@ class TestUnifiedAgent:
             agent = build_agent()
 
         # The agent should have tools directly — no task() subagent delegation
-        # Count of tools should be substantial (accounts, transactions, investments, etc.)
-        tool_names = [t.__name__ for t in agent._tools]
+        # pydantic_ai Agent stores function tools in _function_toolset.tools (a dict)
+        tool_names: list[str] = []
+        if hasattr(agent, '_function_toolset'):
+            tool_names = list(agent._function_toolset.tools.keys())
         assert len(tool_names) > 20, f"Expected 20+ tools, got {len(tool_names)}"
 
-        # Verify key tools are present
+        # Verify key tools are present (tool names may have leading underscores)
         expected_tools = {
-            "create_transaction", "list_accounts", "get_active_fy",
-            "buy_investment", "sell_investment", "create_fd",
-            "list_fds", "get_portfolio", "get_capital_gains",
-            "get_profit_loss", "get_balance_sheet", "get_cash_flow",
-            "review_staging", "confirm_staging",
-            "get_recurring_due", "confirm_recurring",
-            "parse_natural_language", "list_transactions",
-            "get_merchant_rules", "resolve_upi_accounts",
-            "create_merchant_rule", "delete_merchant_rule",
-            "get_depreciation_summary", "fetch_prices", "get_tax_rules",
-            "apply_merchant_rules",
+            "_create_transaction", "_list_accounts", "_get_active_fy",
+            "_buy_investment", "_sell_investment", "_create_fd",
+            "_list_fds", "_get_portfolio", "_get_capital_gains",
+            "_get_profit_loss", "_get_balance_sheet", "_get_cash_flow",
+            "_review_staging", "_confirm_staging",
+            "_get_recurring_due", "_confirm_recurring",
+            "_parse_natural_language", "_list_transactions",
+            "_get_merchant_rules", "_resolve_upi_accounts",
+            "_create_merchant_rule", "_delete_merchant_rule",
+            "_get_depreciation_summary", "_fetch_prices", "_get_tax_rules",
+            "_apply_merchant_rules",
         }
         actual_tools = set(tool_names)
         missing = expected_tools - actual_tools

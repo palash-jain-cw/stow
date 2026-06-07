@@ -43,20 +43,21 @@ def _normalize_tags(raw: Any) -> list[str] | None:
     return tags or None
 
 
-def parse_proposal(text: str) -> tuple[dict | None, str]:
-    """Extract a PROPOSAL: JSON line from an orchestrator response.
+def parse_proposals(text: str) -> tuple[list[dict], str]:
+    """Extract all PROPOSAL: JSON lines from an orchestrator response.
 
-    Returns (proposal_dict, display_text). proposal_dict is None when no
-    valid proposal line is found. display_text has the PROPOSAL: line removed.
+    Returns (list_of_proposal_dicts, display_text). display_text has all
+    PROPOSAL: lines removed.
     """
     lines = text.splitlines()
-    proposal: dict | None = None
+    proposals: list[dict] = []
     remaining: list[str] = []
 
     for line in lines:
         if line.startswith(PROPOSAL_PREFIX):
             try:
                 proposal = json.loads(line[len(PROPOSAL_PREFIX):])
+                proposals.append(proposal)
             except json.JSONDecodeError as exc:
                 logger.warning("Invalid PROPOSAL JSON: %s", exc)
                 remaining.append(line)
@@ -64,7 +65,7 @@ def parse_proposal(text: str) -> tuple[dict | None, str]:
             remaining.append(line)
 
     display = "\n".join(remaining).strip()
-    return proposal, display
+    return proposals, display
 
 
 def normalize_proposal(raw: dict[str, Any]) -> dict[str, Any]:
@@ -129,11 +130,6 @@ def pop_pending(user_key: str, proposal_id: str) -> dict[str, Any] | None:
     if proposal_id == _latest_pending.get(user_key):
         _latest_pending.pop(user_key, None)
     return proposal
-
-
-def clear_pending_for_user(user_key: str) -> None:
-    _pending.pop(user_key, None)
-    _latest_pending.pop(user_key, None)
 
 
 async def execute_proposal(
@@ -218,6 +214,68 @@ async def handle_proposal_action(
         return ProposalActionResult("none")
 
     lowered = text.lower()
+
+    # "confirm all" / "decline all"
+    if lowered == "confirm all":
+        if user_key is None:
+            return ProposalActionResult("none")
+        proposals = list_pending_proposals(user_key)
+        if not proposals:
+            return ProposalActionResult("none")
+        success_messages: list[str] = []
+        failures: list[str] = []
+        for proposal in proposals:
+            result = await _confirm_proposal_data(proposal, http_client, base_url, user_key=user_key)
+            if result.kind == "reply":
+                success_messages.append(result.message)
+            else:
+                failures.append(result.message)
+        if failures:
+            clear_pending_proposals(user_key)
+            parts = []
+            if success_messages:
+                parts.append("\n".join(success_messages))
+            parts.extend(failures)
+            return ProposalActionResult("agent", "\n\n".join(parts))
+        clear_pending_proposals(user_key)
+        return ProposalActionResult("reply", "\n".join(success_messages) if success_messages else "All transactions posted.")
+
+    if lowered == "decline all":
+        if user_key:
+            clear_pending_proposals(user_key)
+        return ProposalActionResult("reply", "All transactions discarded.")
+
+    # "confirm N" or "decline N" (N = transaction index)
+    confirm_match = lowered.startswith("confirm ") and lowered[8:].strip().isdigit()
+    decline_match = lowered.startswith("decline ") and lowered[8:].strip().isdigit()
+
+    if confirm_match or decline_match:
+        if user_key is None:
+            return ProposalActionResult("none")
+        idx_str = lowered[8:].strip()
+        idx = int(idx_str) - 1  # 1-based to 0-based
+        proposals = list_pending_proposals(user_key)
+        if idx < 0 or idx >= len(proposals):
+            return ProposalActionResult(
+                "reply",
+                f"Only {len(proposals)} transaction(s) in the batch. Use confirm 1–{len(proposals)} or decline 1–{len(proposals)}.",
+            )
+
+        if decline_match:
+            removed = pop_pending_by_index(user_key, idx)
+            if removed:
+                return ProposalActionResult("reply", f"Transaction {idx + 1} discarded.")
+            return ProposalActionResult("reply", "Transaction already discarded.")
+
+        # confirm N
+        removed = pop_pending_by_index(user_key, idx)
+        if removed is None:
+            return ProposalActionResult("reply", "Transaction already posted or discarded.")
+        result = await _confirm_proposal_data(removed, http_client, base_url, user_key=user_key)
+        if result.kind == "reply":
+            return ProposalActionResult("reply", f"Transaction {idx + 1}: {result.message}")
+        return result
+
     if lowered in _DECLINE_WORDS:
         if user_key:
             pop_latest_pending(user_key)
@@ -243,10 +301,34 @@ async def handle_proposal_action(
             )
         return await _confirm_proposal_data(raw, http_client, base_url, user_key=user_key)
 
+    # Telegram inline callback dispatch — cfm:all, cfm:{id}, dec:all, dec:{id}
+    if text == "cfm:all":
+        return await handle_proposal_action("confirm all", http_client, base_url, user_key=user_key)
+    if text == "dec:all":
+        return await handle_proposal_action("decline all", http_client, base_url, user_key=user_key)
     if text.startswith("cfm:"):
-        return ProposalActionResult("none")
+        proposal_id = text[4:]
+        if not proposal_id:
+            return ProposalActionResult("none")
+        return await confirm_pending_proposal(user_key, proposal_id, http_client, base_url)
+    if text.startswith("dec:"):
+        proposal_id = text[4:]
+        if not proposal_id:
+            return ProposalActionResult("none")
+        pop_pending(user_key, proposal_id)
+        return ProposalActionResult("reply", "Transaction discarded.")
 
     return ProposalActionResult("none")
+
+
+def pop_pending_by_index(user_key: str, idx: int) -> dict[str, Any] | None:
+    """Remove and return the proposal at a given index (0-based) in a single pass."""
+    bucket = _pending.get(user_key, {})
+    ids = list(bucket.keys())
+    if not (0 <= idx < len(ids)):
+        return None
+    proposal_id = ids[idx]
+    return pop_pending(user_key, proposal_id)
 
 
 async def try_handle_proposal_action(
@@ -285,3 +367,18 @@ async def confirm_pending_proposal(
 def decline_pending_proposal(user_key: str, proposal_id: str) -> str:
     pop_pending(user_key, proposal_id)
     return "Transaction discarded."
+
+
+def list_pending_proposals(user_key: str) -> list[dict[str, Any]]:
+    """Return all pending proposals for a user as a list (ordered by insertion)."""
+    bucket = _pending.get(user_key, {})
+    if not bucket:
+        return []
+    # Return in insertion order (Python 3.7+ dicts preserve order)
+    return list(bucket.values())
+
+
+def clear_pending_proposals(user_key: str) -> None:
+    """Remove all pending proposals for a user."""
+    _pending.pop(user_key, None)
+    _latest_pending.pop(user_key, None)

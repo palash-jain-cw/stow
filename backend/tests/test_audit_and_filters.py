@@ -131,9 +131,10 @@ def test_ledger_returns_transactions_for_account(client, ctx):
     _post(client, ctx, amount=10000)
     _post(client, ctx, amount=5000)
     data = client.get(f"/accounts/{b}/ledger?fy_id={fy_id}").json()
-    assert len(data) == 2
-    assert data[0]["running_balance"] == -10000
-    assert data[1]["running_balance"] == -15000
+    assert len(data["entries"]) == 2
+    # Entries are returned newest-first (reversed)
+    assert data["entries"][0]["running_balance"] == -15000
+    assert data["entries"][1]["running_balance"] == -10000
 
 
 # ── Slice 10: opening balance editable until FY locked ─────────────────────

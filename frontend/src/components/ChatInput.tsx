@@ -4,6 +4,60 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ProposalCard, type Proposal } from "./ProposalCard";
 
+// ── Proposal Batch ─────────────────────────────────────────────────────────
+
+interface ProposalBatchProps {
+	proposals: Proposal[];
+	onConfirmAll: () => void;
+	onDeclineAll: () => void;
+	onAction: (action: string, proposal: Proposal, index: number) => void;
+	disabled: boolean;
+	display?: string;
+}
+
+function ProposalBatch({ proposals, onConfirmAll, onDeclineAll, onAction, disabled, display }: ProposalBatchProps) {
+	return (
+		<div className="space-y-3">
+			{proposals.length > 1 && (
+				<div className="flex items-center gap-2 mb-2">
+					<span className="text-xs font-medium text-zinc-500">
+						📦 Batch of {proposals.length} transactions
+					</span>
+					<button
+						onClick={onConfirmAll}
+						disabled={disabled}
+						className="text-xs text-emerald-600 hover:text-emerald-700 hover:underline disabled:opacity-40"
+					>
+						Confirm all
+					</button>
+					<button
+						onClick={onDeclineAll}
+						disabled={disabled}
+						className="text-xs text-red-500 hover:text-red-600 hover:underline disabled:opacity-40"
+					>
+						Decline all
+					</button>
+				</div>
+			)}
+			{proposals.map((proposal, idx) => (
+				<div key={idx} className="relative">
+					{proposals.length > 1 && (
+						<span className="text-[10px] text-zinc-400 font-medium mb-1 block">
+							{idx + 1}/{proposals.length}
+						</span>
+					)}
+					<ProposalCard
+						proposal={proposal}
+						display={proposals.length === 1 ? (display ?? "") : ""}
+						onAction={(action) => onAction(action, proposal, idx)}
+						disabled={disabled}
+					/>
+				</div>
+			))}
+		</div>
+	);
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type ChatMode = "compact" | "expanded";
@@ -96,18 +150,27 @@ export function ChatInput({
 	);
 
 	const handleProposalAction = useCallback(
-		(action: string, proposal: Proposal) => {
+		(action: string, proposal: Proposal, index: number) => {
 			if (action === "confirm") {
-				session.confirmProposal(proposal);
+				session.confirmProposalByIndex(index);
 				onTransactionSaved?.();
 			} else if (action === "decline") {
-				session.declineProposal();
+				session.declineProposalByIndex(index);
 			} else if (action === "edit") {
 				onEditProposal?.(proposal);
 			}
 		},
-		[session, onTransactionSaved],
+		[session, onTransactionSaved, onEditProposal],
 	);
+
+	const handleConfirmAll = useCallback(() => {
+		session.confirmAllProposals();
+		onTransactionSaved?.();
+	}, [session, onTransactionSaved]);
+
+	const handleDeclineAll = useCallback(() => {
+		session.declineAllProposals();
+	}, [session]);
 
 	const handleCollapse = useCallback(() => {
 		setMode("compact");
@@ -117,7 +180,7 @@ export function ChatInput({
 	}, [session, onModeChange]);
 
 	const hasMessages = session.messages.length > 0;
-	const hasProposal = session.currentProposal !== null;
+	const hasProposal = session.currentProposals.length > 0;
 
 	return (
 		<div
@@ -240,16 +303,16 @@ export function ChatInput({
 												)}
 
 												{/* Proposal card */}
-												{msg.proposal && (
-													<ProposalCard
-														proposal={msg.proposal}
-														display={msg.proposalDisplay ?? msg.content}
-														onAction={(action) =>
-															handleProposalAction(action, msg.proposal!)
-														}
-														disabled={msg.streaming || session.isTyping}
-													/>
-												)}
+												{msg.proposals && msg.proposals.length > 0 && (
+												<ProposalBatch
+													proposals={msg.proposals}
+													onConfirmAll={handleConfirmAll}
+													onDeclineAll={handleDeclineAll}
+													onAction={handleProposalAction}
+													disabled={msg.streaming || session.isTyping}
+													display={msg.proposalDisplay ?? msg.content}
+												/>
+											)}
 
 												{/* Completed reply with no visible body */}
 												{!msg.streaming &&

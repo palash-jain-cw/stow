@@ -8,7 +8,7 @@ interface ChatMessage {
 	role: "user" | "agent";
 	content: string;
 	streaming?: boolean;
-	proposal?: Proposal;
+	proposals?: Proposal[];
 	proposalDisplay?: string;
 }
 
@@ -29,10 +29,12 @@ interface ChatSessionReturn {
 	status: WsStatus;
 	isTyping: boolean;
 	progressLabel: string;
-	currentProposal: Proposal | null;
+	currentProposals: Proposal[];
 	send: (text: string) => void;
-	confirmProposal: (proposal: Proposal & { amount?: number }) => void;
-	declineProposal: () => void;
+	confirmAllProposals: () => void;
+	declineAllProposals: () => void;
+	confirmProposalByIndex: (index: number) => void;
+	declineProposalByIndex: (index: number) => void;
 	editProposal: (
 		proposal: Proposal & { amount?: number },
 		edits: Partial<Proposal>,
@@ -54,38 +56,39 @@ const WS_URL = BASE.replace(/^http/, "ws") + "/chat/ws";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function parseProposal(
+function parseProposals(
 	content: string,
-): { proposal: Proposal; display: string } | null {
-	for (const line of content.split("\n")) {
+): { proposals: Proposal[]; display: string } {
+	const proposals: Proposal[] = [];
+	const lines = content.split("\n");
+	for (const line of lines) {
 		if (line.startsWith(PROPOSAL_PREFIX)) {
 			try {
 				const proposal = JSON.parse(
 					line.slice(PROPOSAL_PREFIX.length),
 				) as Proposal;
-				const display = content
-					.split("\n")
-					.filter((l) => !l.startsWith(PROPOSAL_PREFIX))
-					.join("\n")
-					.trim();
-				return { proposal, display };
+				proposals.push(proposal);
 			} catch {
-				return null;
+				// skip invalid proposal lines
 			}
 		}
 	}
-	return null;
+	const display = lines
+		.filter((l) => !l.startsWith(PROPOSAL_PREFIX))
+		.join("\n")
+		.trim();
+	return { proposals, display };
 }
 
 function finalizeAgentMessage(msg: ChatMessage): ChatMessage {
-	const parsed = parseProposal(msg.content);
-	if (parsed) {
+	const { proposals, display } = parseProposals(msg.content);
+	if (proposals.length > 0) {
 		return {
 			...msg,
 			streaming: false,
-			proposal: parsed.proposal,
-			proposalDisplay: parsed.display,
-			content: parsed.display || msg.content,
+			proposals,
+			proposalDisplay: display,
+			content: display || msg.content,
 		};
 	}
 	if (!msg.content.trim()) {
@@ -109,7 +112,7 @@ export function useChatSession(): ChatSessionReturn {
 	const [status, setStatus] = useState<WsStatus>("connecting");
 	const [isTyping, setIsTyping] = useState(false);
 	const [progressLabel, setProgressLabel] = useState("");
-	const [currentProposal, setCurrentProposal] = useState<Proposal | null>(null);
+	const [currentProposals, setCurrentProposals] = useState<Proposal[]>([]);
 
 	const wsRef = useRef<WebSocket | null>(null);
 	const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -188,8 +191,8 @@ export function useChatSession(): ChatSessionReturn {
 									m.id === doneId ? finalizeAgentMessage(m) : m,
 								);
 								const finalized = updated.find((m) => m.id === doneId);
-								if (finalized?.proposal) {
-									setCurrentProposal(finalized.proposal);
+								if (finalized?.proposals) {
+									setCurrentProposals(finalized.proposals);
 								}
 								return updated;
 							});
@@ -243,7 +246,7 @@ export function useChatSession(): ChatSessionReturn {
 		pendingQueueRef.current.push(agentId);
 		setIsTyping(true);
 		setProgressLabel("");
-		setCurrentProposal(null);
+		setCurrentProposals([]);
 		ws.send(JSON.stringify({ type: "text", content: text }));
 	}, []);
 
@@ -261,18 +264,31 @@ export function useChatSession(): ChatSessionReturn {
 		ws.send(JSON.stringify({ type: "text", content: payload }));
 	}, []);
 
-	// Confirm proposal
-	const confirmProposal = useCallback(
-		(proposal: Proposal & { amount?: number }) => {
-			sendAgentAction(buildConfirmMessage(proposal));
+	// Confirm all proposals
+	const confirmAllProposals = useCallback(() => {
+		sendAgentAction("confirm all");
+	}, [sendAgentAction]);
+
+	// Decline all proposals
+	const declineAllProposals = useCallback(() => {
+		sendAgentAction("decline all");
+	}, [sendAgentAction]);
+
+	// Confirm proposal by index
+	const confirmProposalByIndex = useCallback(
+		(index: number) => {
+			sendAgentAction(`confirm ${index + 1}`);
 		},
 		[sendAgentAction],
 	);
 
-	// Decline proposal
-	const declineProposal = useCallback(() => {
-		sendAgentAction("decline");
-	}, [sendAgentAction]);
+	// Decline proposal by index
+	const declineProposalByIndex = useCallback(
+		(index: number) => {
+			sendAgentAction(`decline ${index + 1}`);
+		},
+		[sendAgentAction],
+	);
 
 	// Edit proposal
 	const editProposal = useCallback(
@@ -286,7 +302,7 @@ export function useChatSession(): ChatSessionReturn {
 	// Clear chat
 	const clear = useCallback(() => {
 		setMessages([]);
-		setCurrentProposal(null);
+		setCurrentProposals([]);
 		clearPendingQueue();
 	}, [clearPendingQueue]);
 
@@ -338,10 +354,12 @@ export function useChatSession(): ChatSessionReturn {
 		status,
 		isTyping,
 		progressLabel,
-		currentProposal,
+		currentProposals,
 		send,
-		confirmProposal,
-		declineProposal,
+		confirmAllProposals,
+		declineAllProposals,
+		confirmProposalByIndex,
+		declineProposalByIndex,
 		editProposal,
 		sendTransaction,
 		clear,

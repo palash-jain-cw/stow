@@ -780,6 +780,7 @@ def test_confirm_does_not_post_pending_rows_even_with_account(
 def test_confirm_batch_posts_payment_and_receipt_with_correct_entry_signs(
     session, fy, bank_account, expense_account
 ):
+    import uuid
     from stow.import_pipeline import confirm_batch
     from stow.models import Entry, ImportBatch, StagingRow, Transaction
 
@@ -787,10 +788,11 @@ def test_confirm_batch_posts_payment_and_receipt_with_correct_entry_signs(
     session.add(batch)
     session.flush()
 
+    unique_date = date(2026, 5, 15)
     payment = StagingRow(
         batch_id=batch.id,
         raw_data={},
-        date=date(2026, 5, 1),
+        date=unique_date,
         amount=-120000,
         description="SWIGGY PAYMENT",
         suggested_account_id=expense_account.id,
@@ -799,7 +801,7 @@ def test_confirm_batch_posts_payment_and_receipt_with_correct_entry_signs(
     receipt = StagingRow(
         batch_id=batch.id,
         raw_data={},
-        date=date(2026, 5, 2),
+        date=date(2026, 5, 16),
         amount=500000,
         description="SALARY CREDIT",
         suggested_account_id=expense_account.id,
@@ -813,7 +815,8 @@ def test_confirm_batch_posts_payment_and_receipt_with_correct_entry_signs(
 
     txns = session.exec(
         select(Transaction)
-        .where(Transaction.number.like("IMP-202605%"))
+        .where(Transaction.date.in_([unique_date, date(2026, 5, 16)]))
+        .where(Transaction.type.in_(["payment", "receipt"]))
         .order_by(Transaction.date)
     ).all()
     assert len(txns) == 2

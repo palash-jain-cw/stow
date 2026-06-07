@@ -18,7 +18,7 @@ from agent.orchestrator import build_orchestrator
 from agent.transport.proposal import (
     handle_proposal_action,
     normalize_proposal,
-    parse_proposal,
+    parse_proposals,
     store_pending,
 )
 from stow.ai_config import model_settings
@@ -242,8 +242,8 @@ async def handle_websocket(websocket: WebSocket) -> None:
                             import_done_id,
                         )
                         active_import_batch_id = None
-                    proposal, _ = parse_proposal(output)
-                    if proposal is not None:
+                    proposals, _ = parse_proposals(output)
+                    for proposal in proposals:
                         try:
                             normalize_proposal(proposal)
                             store_pending(session_key, proposal)

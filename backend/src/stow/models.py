@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 from sqlalchemy import BigInteger, Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
@@ -72,7 +72,7 @@ class TransactionAuditLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     transaction_id: int = Field(foreign_key="transaction.id")
     snapshot: dict = Field(sa_column=Column(JSON))
-    edited_at: datetime = Field(default_factory=datetime.utcnow)
+    edited_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class OpeningBalance(SQLModel, table=True):
@@ -177,7 +177,7 @@ class ImportBatch(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     filename: str
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     detected_bank: Optional[str] = None
     statement_from: Optional[date] = None
     statement_to: Optional[date] = None

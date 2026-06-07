@@ -13,7 +13,7 @@ from agent.transport.proposal import (
     execute_proposal,
     handle_proposal_action,
     normalize_proposal,
-    parse_proposal,
+    parse_proposals,
     pop_latest_pending,
     store_pending,
     try_handle_proposal_action,
@@ -22,8 +22,8 @@ from agent.transport.proposal import (
 
 class TestParseProposal:
     def test_plain_text_returns_no_proposal(self):
-        proposal, display = parse_proposal("Just a regular response.")
-        assert proposal is None
+        proposals, display = parse_proposals("Just a regular response.")
+        assert proposals == []
         assert display == "Just a regular response."
 
     def test_proposal_line_is_parsed(self):
@@ -31,14 +31,14 @@ class TestParseProposal:
             'PROPOSAL:{"type":"payment","amount_paise":50000}\n\n'
             "Please confirm this transaction."
         )
-        proposal, display = parse_proposal(text)
-        assert proposal == {"type": "payment", "amount_paise": 50000}
+        proposals, display = parse_proposals(text)
+        assert proposals == [{"type": "payment", "amount_paise": 50000}]
         assert "PROPOSAL:" not in display
         assert "Please confirm" in display
 
     def test_proposal_line_stripped_from_display(self):
         text = 'PROPOSAL:{"type":"payment","amount_paise":50000}\n\nConfirm?'
-        _, display = parse_proposal(text)
+        _, display = parse_proposals(text)
         assert not any(line.startswith(PROPOSAL_PREFIX) for line in display.splitlines())
 
     def test_full_proposal_fields_parsed(self):
@@ -49,23 +49,23 @@ class TestParseProposal:
             '"to_account_name":"Electricity","fy_id":3}'
         )
         text = f"PROPOSAL:{proposal_json}\n\n💸 Payment of ₹500"
-        proposal, display = parse_proposal(text)
-        assert proposal is not None
-        assert proposal["type"] == "payment"
-        assert proposal["amount_paise"] == 50000
-        assert proposal["from_account_name"] == "HDFC Bank"
-        assert proposal["fy_id"] == 3
+        proposals, display = parse_proposals(text)
+        assert len(proposals) == 1
+        assert proposals[0]["type"] == "payment"
+        assert proposals[0]["amount_paise"] == 50000
+        assert proposals[0]["from_account_name"] == "HDFC Bank"
+        assert proposals[0]["fy_id"] == 3
         assert "💸" in display
 
-    def test_invalid_json_returns_no_proposal(self):
+    def test_invalid_json_skipped(self):
         text = "PROPOSAL:not-valid-json\n\nSome text"
-        proposal, display = parse_proposal(text)
-        assert proposal is None
+        proposals, display = parse_proposals(text)
+        assert proposals == []
 
     def test_multiline_display_preserved(self):
         text = "PROPOSAL:{}\n\nLine one\nLine two\nLine three"
-        proposal, display = parse_proposal(text)
-        assert proposal == {}
+        proposals, display = parse_proposals(text)
+        assert proposals == [{}]
         assert "Line one" in display
         assert "Line two" in display
 

@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelMessage
 
 from agent.deps import StowDeps
 from agent.orchestrator import build_orchestrator
-from agent.transport.proposal import parse_proposal
+from agent.transport.proposal import parse_proposals
 from stow.ai_config import model_settings
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,8 @@ async def run_orchestrator(
         model_settings=settings,
     )
     output = str(result.output).strip()
-    proposal, display = parse_proposal(output)
+    proposals, display = parse_proposals(output)
+    proposal = proposals[0] if proposals else None
     logger.info("Orchestrator output (first 500 chars): %s", output[:500])
     return AgentRunResult(
         output=output,

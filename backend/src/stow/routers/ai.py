@@ -10,7 +10,7 @@ from pydantic_ai import Agent
 from sqlmodel import Session, select
 
 from stow.ai_config import read_config, write_config, normalize_base_url, model_settings, resolve_llm_base_url
-from stow.ai_agent import get_ai_agent, ParsedTransaction
+from stow.ai_agent import get_ai_agent, ParsedTransaction, ParsedTransactionBatch
 from stow.db import get_session
 from stow.models import Account, Transaction
 
@@ -101,7 +101,7 @@ async def test_connection(body: TestConnectionIn = TestConnectionIn()):
         )
 
 
-@router.post("/parse-transaction", response_model=ParsedTransaction)
+@router.post("/parse-transaction", response_model=list[ParsedTransaction])
 async def parse_transaction(
     body: ParseRequest,
     session: Session = Depends(get_session),
@@ -126,4 +126,5 @@ async def parse_transaction(
     )
 
     result = await agent.run(user_prompt, model_settings=model_settings("parse"))
-    return result.output
+    # result.output is ParsedTransactionBatch; return the list
+    return result.output.transactions

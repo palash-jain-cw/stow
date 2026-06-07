@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import stow.ai_config as ai_config_module
 from stow.main import app
-from stow.ai_agent import get_ai_agent, ParsedTransaction
+from stow.ai_agent import get_ai_agent, ParsedTransaction, ParsedTransactionBatch
 
 
 def test_qwen_model_profile_merges_system_messages():
@@ -16,14 +16,14 @@ def test_qwen_model_profile_merges_system_messages():
 
 def test_model_settings_role_caps():
     parse_settings = ai_config_module.model_settings("parse")
-    assert parse_settings["max_tokens"] == 512
+    assert parse_settings["max_tokens"] == 4096
     assert parse_settings["thinking"] is False
 
     orch_settings = ai_config_module.model_settings("orchestrator")
-    assert orch_settings["max_tokens"] == 1024
+    assert orch_settings["max_tokens"] == 16384
 
     ping_settings = ai_config_module.model_settings("ping")
-    assert ping_settings["max_tokens"] == 256
+    assert ping_settings["max_tokens"] == 512
 
     import_settings = ai_config_module.model_settings("import")
     assert import_settings["max_tokens"] == 65536
@@ -34,7 +34,7 @@ def test_build_model_applies_default_settings(monkeypatch):
     monkeypatch.setenv("STOW_LLM_MODEL", "qwen3.6-35b")
     model = ai_config_module.build_model()
     assert model.settings is not None
-    assert model.settings.get("max_tokens") == 1024
+    assert model.settings.get("max_tokens") == 8192
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +43,7 @@ def test_build_model_applies_default_settings(monkeypatch):
 
 def test_resolve_llm_base_url_maps_docker_host_on_bare_metal(monkeypatch):
     monkeypatch.setattr(ai_config_module, "_running_in_docker", lambda: False)
+    monkeypatch.setenv("STOW_LLM_PROXY_PORT", "8081")
     assert (
         ai_config_module.resolve_llm_base_url("http://host.docker.internal:8080/v1")
         == "http://127.0.0.1:8080/v1"
@@ -60,6 +61,7 @@ def test_resolve_llm_base_url_keeps_localhost_on_bare_metal(monkeypatch):
 
 def test_resolve_llm_base_url_rewrites_in_docker(monkeypatch):
     monkeypatch.setattr(ai_config_module, "_running_in_docker", lambda: True)
+    monkeypatch.setenv("STOW_LLM_PROXY_PORT", "8081")
     assert (
         ai_config_module.resolve_llm_base_url("http://127.0.0.1:8080/v1")
         == "http://host.docker.internal:8081/v1"
@@ -191,7 +193,7 @@ def test_parse_transaction_returns_structured_dict(client, mock_agent):
         confidence=0.92,
     )
     result = MagicMock()
-    result.output = parsed
+    result.output = ParsedTransactionBatch(transactions=[parsed])
     mock_agent.run = AsyncMock(return_value=result)
 
     app.dependency_overrides[get_ai_agent] = lambda: mock_agent
@@ -202,12 +204,12 @@ def test_parse_transaction_returns_structured_dict(client, mock_agent):
         )
         assert r.status_code == 200
         data = r.json()
-        assert data["type"] == "payment"
-        assert data["amount"] == 240000
-        assert data["narration"] == "Electricity bill"
-        assert data["from_account_id"] == 1
-        assert data["to_account_id"] == 2
-        assert data["confidence"] == pytest.approx(0.92)
+        assert data[0]["type"] == "payment"
+        assert data[0]["amount"] == 240000
+        assert data[0]["narration"] == "Electricity bill"
+        assert data[0]["from_account_id"] == 1
+        assert data[0]["to_account_id"] == 2
+        assert data[0]["confidence"] == pytest.approx(0.92)
     finally:
         app.dependency_overrides.pop(get_ai_agent, None)
 
@@ -230,7 +232,7 @@ def test_parse_transaction_prompt_includes_today(client, mock_agent):
         confidence=0.95,
     )
     result = MagicMock()
-    result.output = parsed
+    result.output = ParsedTransactionBatch(transactions=[parsed])
     mock_agent.run = AsyncMock(return_value=result)
 
     app.dependency_overrides[get_ai_agent] = lambda: mock_agent
