@@ -15,7 +15,14 @@ interface ProposalBatchProps {
 	display?: string;
 }
 
-function ProposalBatch({ proposals, onConfirmAll, onDeclineAll, onAction, disabled, display }: ProposalBatchProps) {
+function ProposalBatch({
+	proposals,
+	onConfirmAll,
+	onDeclineAll,
+	onAction,
+	disabled,
+	display,
+}: ProposalBatchProps) {
 	return (
 		<div className="space-y-3">
 			{proposals.length > 1 && (
@@ -94,8 +101,15 @@ export function ChatInput({
 	const [inputValue, setInputValue] = useState("");
 	const [suggestion] = useState(getRandomSuggestion);
 
-	const inputRef = useRef<HTMLInputElement>(null);
+	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
+
+	const handleCollapse = useCallback(() => {
+		setMode("compact");
+		setInputValue("");
+		session.clear();
+		onModeChange?.(false);
+	}, [session, onModeChange]);
 
 	// Ctrl+K to focus input
 	useEffect(() => {
@@ -113,7 +127,7 @@ export function ChatInput({
 		};
 		document.addEventListener("keydown", handler);
 		return () => document.removeEventListener("keydown", handler);
-	}, [mode, onModeChange]);
+	}, [mode, onModeChange, handleCollapse]);
 
 	// Focus input when expanding
 	useEffect(() => {
@@ -121,6 +135,15 @@ export function ChatInput({
 			inputRef.current.focus();
 		}
 	}, [mode]);
+
+	// Auto-resize textarea to fit content
+	useEffect(() => {
+		const textarea = inputRef.current;
+		if (!textarea) return;
+		textarea.style.height = "auto";
+		const newHeight = Math.min(textarea.scrollHeight, 120);
+		textarea.style.height = newHeight + "px";
+	}, [inputValue]);
 
 	// Scroll to bottom on new messages
 	useEffect(() => {
@@ -172,13 +195,6 @@ export function ChatInput({
 		session.declineAllProposals();
 	}, [session]);
 
-	const handleCollapse = useCallback(() => {
-		setMode("compact");
-		setInputValue("");
-		session.clear();
-		onModeChange?.(false);
-	}, [session, onModeChange]);
-
 	const hasMessages = session.messages.length > 0;
 	const hasProposal = session.currentProposals.length > 0;
 
@@ -198,14 +214,14 @@ export function ChatInput({
 						<span className="text-zinc-400 text-sm">What happened?</span>
 					</div>
 					<div className="flex items-center gap-2">
-						<input
+						<textarea
 							ref={inputRef}
-							type="text"
 							value={inputValue}
 							onChange={(e) => setInputValue(e.target.value)}
 							onKeyDown={handleKeyDown}
 							placeholder={suggestion}
-							className="flex-1 text-sm text-zinc-800 placeholder-zinc-300 border border-zinc-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+							rows={1}
+							className="flex-1 text-sm text-zinc-800 placeholder-zinc-300 border border-zinc-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition resize-none"
 						/>
 						<button
 							onClick={() => handleSend(inputValue)}
@@ -291,7 +307,7 @@ export function ChatInput({
 										) : (
 											<div className="max-w-[85%]">
 												{/* Streaming text */}
-												{msg.content && !msg.proposal && (
+												{msg.content && !msg.proposals && (
 													<div className="bg-zinc-100 rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-sm text-zinc-800 leading-relaxed prose prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
 														<ReactMarkdown remarkPlugins={[remarkGfm]}>
 															{msg.content}
@@ -304,19 +320,19 @@ export function ChatInput({
 
 												{/* Proposal card */}
 												{msg.proposals && msg.proposals.length > 0 && (
-												<ProposalBatch
-													proposals={msg.proposals}
-													onConfirmAll={handleConfirmAll}
-													onDeclineAll={handleDeclineAll}
-													onAction={handleProposalAction}
-													disabled={msg.streaming || session.isTyping}
-													display={msg.proposalDisplay ?? msg.content}
-												/>
-											)}
+													<ProposalBatch
+														proposals={msg.proposals}
+														onConfirmAll={handleConfirmAll}
+														onDeclineAll={handleDeclineAll}
+														onAction={handleProposalAction}
+														disabled={msg.streaming || session.isTyping}
+														display={msg.proposalDisplay ?? msg.content}
+													/>
+												)}
 
 												{/* Completed reply with no visible body */}
 												{!msg.streaming &&
-													!msg.proposal &&
+													!msg.proposals &&
 													!msg.content.trim() && (
 														<div className="bg-zinc-100 rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-sm text-zinc-500 italic">
 															No response received.
@@ -345,9 +361,8 @@ export function ChatInput({
 					{/* Input */}
 					<div className="px-5 py-3 border-t border-zinc-100">
 						<div className="flex items-center gap-2">
-							<input
+							<textarea
 								ref={inputRef}
-								type="text"
 								value={inputValue}
 								onChange={(e) => setInputValue(e.target.value)}
 								onKeyDown={handleKeyDown}
@@ -356,7 +371,8 @@ export function ChatInput({
 										? "Confirm, edit, or ask something else…"
 										: "What else?"
 								}
-								className="flex-1 text-sm text-zinc-800 placeholder-zinc-300 border border-zinc-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+								rows={1}
+								className="flex-1 text-sm text-zinc-800 placeholder-zinc-300 border border-zinc-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition resize-none"
 							/>
 							<button
 								onClick={() => handleSend(inputValue)}
